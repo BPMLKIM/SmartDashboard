@@ -1,0 +1,352 @@
+<style>
+  /* =========================================
+     1. TEMA UTAMA & BACKGROUND
+     ========================================= */
+  :root {
+    --bg-gradient: linear-gradient(135deg, #e0f2fe 0%, #f0f9ff 50%, #eef2ff 100%);
+    --text-main: #1e293b;
+    --text-muted: #64748b;
+    --scroll-track: rgba(0, 0, 0, 0.05);
+    --scroll-thumb: #cbd5e1;
+    --scroll-thumb-hover: #94a3b8;
+  }
+
+  body {
+    font-family: 'Plus Jakarta Sans', sans-serif;
+    background: var(--bg-gradient);
+    background-attachment: fixed;
+    color: var(--text-main);
+  }
+
+  /* =========================================
+     2. SCROLLBAR CUSTOM (Disatukan)
+     ========================================= */
+  .custom-scroll::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  .custom-scroll::-webkit-scrollbar-track {
+    background: var(--scroll-track);
+    border-radius: 4px;
+  }
+  .custom-scroll::-webkit-scrollbar-thumb {
+    background-color: var(--scroll-thumb);
+    border-radius: 10px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+  }
+  .custom-scroll::-webkit-scrollbar-thumb:hover {
+    background-color: var(--scroll-thumb-hover);
+  }
+
+  /* =========================================
+     3. GLASSMORPHISM & KAD
+     ========================================= */
+  .glass-card {
+    background: rgba(255, 255, 255, 0.65);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid rgba(255, 255, 255, 0.8);
+    box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.07);
+    border-radius: 24px;
+    transition: all 0.3s ease;
+  }
+
+  .glass-card:hover {
+    background: rgba(255, 255, 255, 0.8);
+    box-shadow: 0 12px 40px 0 rgba(31, 38, 135, 0.12);
+    transform: translateY(-2px);
+    z-index: 50; /* Naikkan layer bila hover */
+  }
+
+  /* Efek Fokus: Kaburkan kad lain bila satu di-hover */
+  .group:hover ~ .group {
+    filter: blur(2px) grayscale(20%);
+    opacity: 0.6;
+    transition: all 0.3s ease;
+  }
+
+  .btn-glass-active {
+    background: rgba(37, 99, 235, 0.9);
+    color: white;
+    box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+  }
+
+  /* =========================================
+     4. ANIMASI (Disusun Semula)
+     ========================================= */
+  
+  /* Fade In (Satu definisi sahaja) */
+  .fade-in { animation: fadeIn 0.5s ease-out forwards; }
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(15px) scale(0.98); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
+  }
+
+  /* Pulse */
+  @keyframes pulse-soft {
+    0%, 100% { transform: scale(1); opacity: 0.5; }
+    50% { transform: scale(1.2); opacity: 0.2; }
+  }
+
+  /* Spinners */
+  @keyframes spin-slow { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+  @keyframes spin-reverse { from { transform: rotate(360deg); } to { transform: rotate(0deg); } }
+  .animate-spin-slow { animation: spin-slow 3s linear infinite; }
+
+  /* Shimmer Effect */
+  @keyframes shimmer-slide {
+    0% { transform: translateX(-150%) skewX(-20deg); }
+    100% { transform: translateX(250%) skewX(-20deg); }
+  }
+  .animate-shimmer { animation: shimmer-slide 2s infinite linear; }
+
+  /* Ticker (Berita Bergerak) */
+  .ticker-wrap {
+    width: 100%;
+    overflow: hidden;
+    padding-left: 100%;
+    box-sizing: border-box;
+    white-space: nowrap;
+  }
+  .ticker {
+    display: inline-block;
+    white-space: nowrap;
+    animation: ticker 40s linear infinite;
+  }
+  .ticker-container:hover .ticker { animation-play-state: paused; }
+  @keyframes ticker {
+    0% { transform: translate3d(0, 0, 0); }
+    100% { transform: translate3d(-100%, 0, 0); }
+  }
+
+  /* =========================================
+     5. DARK MODE ENGINE (Dipermudah)
+     ========================================= */
+  
+  /* Background Utama Dark Mode */
+  .dark-mode {
+    background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #0f172a 100%) !important;
+    color: #f1f5f9 !important;
+    --scroll-track: rgba(255, 255, 255, 0.05);
+    --scroll-thumb: #475569;
+    --scroll-thumb-hover: #64748b;
+  }
+
+  /* Override Kad & Elemen Putih */
+  .dark-mode .glass-card,
+  .dark-mode [class*="bg-white"],
+  .dark-mode [class*="bg-slate-50"],
+  .dark-mode [class*="bg-slate-200"] {
+    background-color: rgba(30, 41, 59, 0.85) !important; /* Slate-800 Glass */
+    border-color: rgba(255, 255, 255, 0.1) !important;
+    color: #f1f5f9 !important;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.5);
+  }
+
+  /* Override Teks Gelap ke Terang */
+  .dark-mode [class*="text-slate-900"],
+  .dark-mode [class*="text-slate-800"],
+  .dark-mode [class*="text-gray-900"] {
+    color: #f1f5f9 !important;
+  }
+  
+  .dark-mode [class*="text-slate-600"],
+  .dark-mode [class*="text-slate-500"],
+  .dark-mode [class*="text-gray-500"] {
+    color: #94a3b8 !important;
+  }
+
+  /* Override Input & Forms */
+  .dark-mode input, .dark-mode select, .dark-mode option {
+    background-color: #1e293b !important;
+    border-color: #475569 !important;
+    color: #fff !important;
+  }
+  
+  /* Fix Table Hover di Dark Mode */
+  .dark-mode tbody tr:hover {
+    background-color: rgba(255, 255, 255, 0.05) !important;
+  }
+
+  /* Container Kad Utama */
+  .gamification-card {
+    background: rgba(255, 255, 255, 0.1);
+    backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    border-radius: 24px;
+    padding: 30px;
+    color: white;
+    font-family: 'Segoe UI', Roboto, sans-serif;
+    text-align: center;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+    max-width: 450px;
+    margin: 20px auto;
+    position: relative;
+    overflow: hidden;
+  }
+
+  /* Tajuk */
+  .gami-title {
+    font-size: 14px;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    opacity: 0.8;
+    margin-bottom: 20px;
+    border-bottom: 1px solid rgba(255,255,255,0.1);
+    padding-bottom: 10px;
+  }
+
+  /* Nombor Besar Tengah */
+  .big-score-container {
+    position: relative;
+    width: 180px;
+    height: 180px;
+    margin: 0 auto 30px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    /* Gradient Ring Effect */
+    background: conic-gradient(
+      #00e5ff calc(var(--percent) * 1%), 
+      rgba(255,255,255,0.05) 0deg
+    );
+    box-shadow: 0 0 30px rgba(0, 229, 255, 0.2);
+    transition: background 1s ease;
+  }
+  
+  /* Lubang Donut */
+  .big-score-container::before {
+    content: '';
+    position: absolute;
+    width: 150px;
+    height: 150px;
+    background: rgba(20, 20, 30, 0.9); /* Gelap sikit */
+    border-radius: 50%;
+  }
+
+  .big-score-text {
+    position: relative;
+    z-index: 2;
+    font-size: 3.5rem;
+    font-weight: 700;
+    background: -webkit-linear-gradient(#fff, #00e5ff);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+
+  /* List Progress Bars */
+  .progress-list {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+    text-align: left;
+  }
+
+  .p-item {
+    margin-bottom: 5px;
+  }
+
+  .p-label {
+    font-size: 0.85rem;
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 5px;
+    color: #ddd;
+  }
+
+  /* Progress Bar Base */
+  .p-bar-bg {
+    height: 10px;
+    background: rgba(255,255,255,0.1);
+    border-radius: 5px;
+    overflow: hidden;
+    position: relative;
+  }
+
+  .p-bar-fill {
+    height: 100%;
+    border-radius: 5px;
+    width: 0%;
+    transition: width 1.5s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  /* Warna-warna Spesifik */
+  /* 1. Kemajuan Fasa (Segmented look) */
+  .fill-fasa { 
+    background: linear-gradient(90deg, #ff007a, #ff5e00);
+    box-shadow: 0 0 10px #ff007a;
+  }
+  
+  /* 2. Bayaran (Green) */
+  .fill-duit { 
+    background: linear-gradient(90deg, #00ff88, #00f2ff);
+    box-shadow: 0 0 10px #00ff88;
+  }
+
+  /* 3. Perancangan (Yellow/Gold) */
+  .fill-plan { 
+    background: linear-gradient(90deg, #ffd700, #ffaa00);
+    box-shadow: 0 0 10px #ffd700;
+  }
+
+  /* Segmented Line Overlay for Component 1 (5 Segments) */
+  .segmented-overlay {
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    display: flex;
+  }
+  .segment-line {
+    flex: 1;
+    border-right: 2px solid rgba(0,0,0,0.5); /* Garis pemisah hitam */
+  }
+  .segment-line:last-child { border: none; }
+
+  
+  /* =========================================
+    6. ANIMASI JANTUNG (VITAL MONITOR)
+    ========================================= */
+
+  @keyframes heartbeat {
+    0% { 
+      transform: scale(1); 
+    }
+    15% { 
+      transform: scale(1.3); 
+      filter: drop-shadow(0 0 5px rgba(239, 68, 68, 0.5)); /* Glow Effect Merah bila degup */
+    }
+    30% { 
+      transform: scale(1); 
+    }
+    45% { 
+      transform: scale(1.15); 
+    }
+    60% { 
+      transform: scale(1); 
+    }
+    100% { 
+      transform: scale(1); 
+    }
+  }
+
+  /* Degupan Normal */
+  .animate-heartbeat {
+    animation: heartbeat 1.5s infinite ease-in-out;
+  }
+
+  /* Degupan Laju (Panic Mode) */
+  .animate-heartbeat-fast {
+    animation: heartbeat 0.6s infinite ease-in-out;
+  }
+
+  /* Animasi Kilauan (Sparkle) untuk Projek Siap */
+  @keyframes spin-slow {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+  }
+  .animate-spin-slow {
+    animation: spin-slow 3s linear infinite;
+  }
+</style>
