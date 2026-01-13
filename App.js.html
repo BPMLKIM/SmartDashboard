@@ -44,7 +44,7 @@
   };
 
   // --- KOMPONEN CHART (FIXED: GUNA USEREF UNTUK ELAK MEMORY LEAK) ---
-  const ChartSection = ({ data, darkMode }) => {
+  const ChartSection = ({ data, darkMode, onStatusClick }) => {
     const statusChartRef = useRef(null);
     const costChartRef = useRef(null);
 
@@ -109,6 +109,7 @@
                 hoverOffset: 20,
                 borderRadius: 8,
                 cutout: "85%",
+                cursor: 'pointer'
               },
             ],
           },
@@ -116,6 +117,21 @@
             responsive: true,
             maintainAspectRatio: false,
             layout: { padding: 10 },
+            onClick: (event, elements, chart) => {
+                        if (elements[0]) {
+                            const index = elements[0].index;
+                            const clickedStatus = chart.data.labels[index];
+                            
+                            // Panggil fungsi parent untuk filter & tukar tab
+                            if (onStatusClick) {
+                                onStatusClick(clickedStatus);
+                            }
+                        }
+                    },
+            onHover: (event, chartElement) => {
+                        // Ubah cursor jadi pointer bila hover atas carta
+                        event.native.target.style.cursor = chartElement[0] ? 'pointer' : 'default';
+                    },
             animation: {
               animateScale: true,
               animateRotate: true,
@@ -279,6 +295,7 @@
             {Object.keys(chartData.statusCount).map((status) => (
               <div
                 key={status}
+                onClick={() => onStatusClick && onStatusClick(status)}
                 className="flex items-center gap-2 px-3 py-1.5 bg-white/60 hover:bg-white rounded-full border border-slate-100 shadow-sm hover:shadow-md transition-all duration-300 cursor-default"
               >
                 <span
@@ -429,11 +446,684 @@
     );
   };
 
-  // --- 7. KOMPONEN: GAMIFICATION SECTION (ULTIMATE KPI: KUALITI + KUANTITI) ---
+// --- KOMPONEN BARU: TAKWIM MILESTONE (DENGAN FILTER) ---
+const MasterCalendarWidget = ({ data }) => {
+    const [currentDate, setCurrentDate] = useState(new Date());
+    const [selectedDayEvents, setSelectedDayEvents] = useState([]);
+
+    // 1. STATE UNTUK FILTER (BARU TAMBAH)
+    const [filters, setFilters] = useState({ // <--- BARU: State Filter
+        urs: true,
+        uat: true,
+        live: true,
+        eot: true
+    });
+
+    // 2. GENERATE CALENDAR DATA (KEKAL SAMA)
+    const calendarData = useMemo(() => {
+        const year = currentDate.getFullYear();
+        const month = currentDate.getMonth(); 
+        
+        const firstDay = new Date(year, month, 1);
+        const lastDay = new Date(year, month + 1, 0);
+        const daysInMonth = lastDay.getDate();
+        const startDayOfWeek = firstDay.getDay();
+
+        const days = [];
+        for (let i = 0; i < startDayOfWeek; i++) days.push(null);
+        for (let i = 1; i <= daysInMonth; i++) days.push(new Date(year, month, i));
+
+        const eventsMap = {}; 
+
+        data.forEach(p => {
+            if (p.LOGIK_SIAP === 'Batal') return;
+            const sdlc = p.sdlc || {};
+
+            const addEvent = (dateStr, type, color) => {
+                if (!dateStr || dateStr === "-" || dateStr.trim() === "") return;
+                const parts = dateStr.split('/');
+                if (parts.length < 3) return;
+                const d = parseInt(parts[0], 10);
+                const m = parseInt(parts[1], 10) - 1; 
+                const y = parseInt(parts[2], 10);
+                const key = `${y}-${m}-${d}`;
+                
+                if (!eventsMap[key]) eventsMap[key] = [];
+                eventsMap[key].push({ type, color, name: p.NAMA_PAPARAN, ref: p["NO SEBUT HARGA"], pic: p.PEGAWAI_NAMA });
+            };
+
+            const tURS = sdlc["TARIKH URS SEBENAR"] || sdlc["TARIKH URS BARU"] || sdlc["TARIKH URS ASAL"];
+            addEvent(tURS, "URS", "bg-blue-500");
+
+            const tUAT = sdlc["TARIKH UAT SEBENAR"] || sdlc["TARIKH UAT BARU"] || sdlc["TARIK UAT BARU"] || sdlc["TARIKH UAT ASAL"];
+            addEvent(tUAT, "UAT", "bg-orange-500");
+
+            const tLive = sdlc["TARIKH GO LIVE SEBENAR"] || sdlc["TARIKH GO LIVE BARU"] || sdlc["TARIKH GO LIVE ASAL"];
+            addEvent(tLive, "GO-LIVE", "bg-emerald-500");
+
+            if(p["EOT"]) addEvent(p["EOT"], "TAMAT EOT", "bg-red-500");
+        });
+
+        return { days, eventsMap };
+    }, [data, currentDate]);
+
+    // Navigation (KEKAL SAMA)
+    const nextMonth = () => setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 1));
+    const prevMonth = () => setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() - 1, 1));
+    const today = new Date();
+
+    const handleDayClick = (date) => {
+        if (!date) return;
+        const key = `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
+        
+        // KITA TAPIS DATA BILA KLIK JUGA (SUPAYA LIST KANAN PUN IKUT FILTER)
+        const allEvents = calendarData.eventsMap[key] || [];
+        const filteredEvents = allEvents.filter(ev => { // <--- BARU: Logic filter
+            if (ev.type === 'URS' && !filters.urs) return false;
+            if (ev.type === 'UAT' && !filters.uat) return false;
+            if (ev.type === 'GO-LIVE' && !filters.live) return false;
+            if (ev.type === 'TAMAT EOT' && !filters.eot) return false;
+            return true;
+        });
+
+        setSelectedDayEvents({ date, events: filteredEvents });
+    };
+
+    // Auto select today (KEKAL SAMA)
+    useEffect(() => {
+        const todayKey = `${today.getFullYear()}-${today.getMonth()}-${today.getDate()}`;
+        if (calendarData.eventsMap[todayKey]) handleDayClick(today);
+        else handleDayClick(new Date()); 
+    }, [calendarData, filters]); // <--- Tambah 'filters' dalam dependency supaya auto refresh bila tekan toggle
+
+    const monthNames = ["Januari", "Februari", "Mac", "April", "Mei", "Jun", "Julai", "Ogos", "September", "Oktober", "November", "Disember"];
+
+    return (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8 h-full">
+            
+            {/* KALENDAR VIEW (KIRI) */}
+            <div className="lg:col-span-2 bg-white rounded-3xl p-6 border border-slate-200 shadow-xl relative overflow-hidden">
+                <div className="flex justify-between items-center mb-4"> {/* Margin Bottom dikurangkan sikit */}
+                    <div>
+                        <h3 className="text-lg font-black text-slate-800 uppercase tracking-tighter">Takwim Projek</h3>
+                        <p className="text-xs text-slate-400 font-bold">{monthNames[currentDate.getMonth()]} {currentDate.getFullYear()}</p>
+                    </div>
+                    <div className="flex gap-2">
+                        <button onClick={prevMonth} className="p-2 hover:bg-slate-100 rounded-full text-slate-500 transition-colors"><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 19l-7-7 7-7"></path></svg></button>
+                        <button onClick={() => setCurrentDate(new Date())} className="px-3 py-1 bg-indigo-50 text-indigo-600 rounded-lg text-xs font-black uppercase hover:bg-indigo-100 transition-colors">Hari Ini</button>
+                        <button onClick={nextMonth} className="p-2 hover:bg-slate-100 rounded-full text-slate-500 transition-colors"><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5l7 7-7 7"></path></svg></button>
+                    </div>
+                </div>
+
+                {/* --- BARU: BUTANG TOGGLE FILTER DI SINI --- */}
+                <div className="flex flex-wrap gap-2 mb-4 px-1">
+                    <button onClick={() => setFilters(f => ({...f, urs: !f.urs}))} className={`text-[9px] font-bold px-2 py-1 rounded-md border transition-all ${filters.urs ? 'bg-blue-100 text-blue-700 border-blue-200' : 'bg-slate-50 text-slate-400 border-slate-100 opacity-50 grayscale'}`}>URS (Biru)</button>
+                    <button onClick={() => setFilters(f => ({...f, uat: !f.uat}))} className={`text-[9px] font-bold px-2 py-1 rounded-md border transition-all ${filters.uat ? 'bg-orange-100 text-orange-700 border-orange-200' : 'bg-slate-50 text-slate-400 border-slate-100 opacity-50 grayscale'}`}>UAT (Oren)</button>
+                    <button onClick={() => setFilters(f => ({...f, live: !f.live}))} className={`text-[9px] font-bold px-2 py-1 rounded-md border transition-all ${filters.live ? 'bg-emerald-100 text-emerald-700 border-emerald-200' : 'bg-slate-50 text-slate-400 border-slate-100 opacity-50 grayscale'}`}>GO-LIVE (Hijau)</button>
+                    <button onClick={() => setFilters(f => ({...f, eot: !f.eot}))} className={`text-[9px] font-bold px-2 py-1 rounded-md border transition-all ${filters.eot ? 'bg-red-100 text-red-700 border-red-200' : 'bg-slate-50 text-slate-400 border-slate-100 opacity-50 grayscale'}`}>EOT (Merah)</button>
+                </div>
+                {/* ------------------------------------------ */}
+
+                <div className="grid grid-cols-7 gap-2 mb-2 text-center">
+                    {["Ahad", "Isnin", "Selasa", "Rabu", "Khamis", "Jumaat", "Sabtu"].map(d => (
+                        <div key={d} className="text-[10px] font-black text-slate-300 uppercase tracking-wider">{d}</div>
+                    ))}
+                </div>
+                
+                <div className="grid grid-cols-7 gap-2">
+                    {calendarData.days.map((day, i) => {
+                        if (!day) return <div key={i} className="h-20 sm:h-24 bg-slate-50/30 rounded-xl border border-transparent"></div>;
+                        
+                        const key = `${day.getFullYear()}-${day.getMonth()}-${day.getDate()}`;
+                        const allEvents = calendarData.eventsMap[key] || [];
+                        
+                        // --- BARU: LOGIK TAPISAN DI SINI (LANGKAH 3) ---
+                        // Kita filter events SEBELUM render titik-titik
+                        const events = allEvents.filter(ev => {
+                            if (ev.type === 'URS' && !filters.urs) return false;
+                            if (ev.type === 'UAT' && !filters.uat) return false;
+                            if (ev.type === 'GO-LIVE' && !filters.live) return false;
+                            if (ev.type === 'TAMAT EOT' && !filters.eot) return false;
+                            return true;
+                        });
+                        // -----------------------------------------------
+
+                        const isToday = day.getDate() === today.getDate() && day.getMonth() === today.getMonth() && day.getFullYear() === today.getFullYear();
+                        const isSelected = selectedDayEvents.date && day.getDate() === selectedDayEvents.date.getDate() && day.getMonth() === selectedDayEvents.date.getMonth();
+
+                        return (
+                            <div 
+                                key={i} 
+                                onClick={() => handleDayClick(day)}
+                                className={`h-20 sm:h-24 rounded-xl p-2 border transition-all cursor-pointer relative group flex flex-col justify-between
+                                    ${isSelected ? 'border-indigo-500 ring-2 ring-indigo-200 bg-indigo-50/30' : 'border-slate-100 bg-slate-50/50 hover:border-indigo-300 hover:bg-white'}
+                                    ${isToday ? 'bg-white shadow-inner ring-1 ring-slate-200' : ''}
+                                `}
+                            >
+                                <span className={`text-xs font-black ${isToday ? 'text-white bg-indigo-600 w-6 h-6 flex items-center justify-center rounded-full shadow-md shadow-indigo-300' : 'text-slate-400'}`}>
+                                    {day.getDate()}
+                                </span>
+                                
+                                <div className="flex flex-wrap gap-1 content-end">
+                                    {/* Gunakan variable 'events' yang dah ditapis tadi */}
+                                    {events.slice(0, 4).map((ev, idx) => (
+                                        <div key={idx} className={`w-2 h-2 rounded-full ${ev.color} shadow-sm ring-1 ring-white`} title={ev.type}></div>
+                                    ))}
+                                    {events.length > 4 && <span className="text-[8px] text-slate-400 font-bold pl-0.5">+{events.length - 4}</span>}
+                                </div>
+                            </div>
+                        );
+                    })}
+                </div>
+            </div>
+
+            {/* DETAIL EVENTS (KANAN) */}
+            <div className="lg:col-span-1 bg-slate-900 text-white rounded-3xl p-6 shadow-2xl flex flex-col relative overflow-hidden">
+                <div className="absolute top-0 right-0 w-32 h-32 bg-blue-500 rounded-full blur-[60px] opacity-20"></div>
+                <div className="absolute bottom-0 left-0 w-40 h-40 bg-purple-500 rounded-full blur-[60px] opacity-20"></div>
+
+                <div className="relative z-10 h-full flex flex-col">
+                    <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">Agenda Harian</h4>
+                    <h2 className="text-3xl font-black mb-6">
+                        {selectedDayEvents.date ? `${selectedDayEvents.date.getDate()} ${monthNames[selectedDayEvents.date.getMonth()]}` : "Pilih Tarikh"}
+                    </h2>
+
+                    <div className="space-y-3 overflow-y-auto custom-scroll pr-2 flex-1">
+                        {selectedDayEvents.events && selectedDayEvents.events.length > 0 ? (
+                            selectedDayEvents.events.map((ev, idx) => (
+                                <div key={idx} className="bg-white/10 backdrop-blur-md rounded-xl p-3 border border-white/10 hover:bg-white/20 transition-colors group">
+                                    <div className="flex justify-between items-start mb-2">
+                                        <span className={`text-[9px] font-black px-2 py-0.5 rounded shadow-sm text-white uppercase tracking-wider ${ev.color}`}>
+                                            {ev.type}
+                                        </span>
+                                        {ev.ref && <span className="text-[8px] text-slate-400 font-mono truncate max-w-[80px]">{ev.ref}</span>}
+                                    </div>
+                                    <div className="text-sm font-bold leading-tight mb-2 group-hover:text-blue-300 transition-colors">{ev.name}</div>
+                                    <div className="text-[10px] text-slate-400 flex items-center gap-1.5 pt-2 border-t border-white/10">
+                                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path></svg>
+                                        <span className="truncate">{ev.pic || "Tiada Nama"}</span>
+                                    </div>
+                                </div>
+                            ))
+                        ) : (
+                            <div className="h-full flex flex-col items-center justify-center text-slate-500 italic pb-10">
+                                <span className="text-4xl block mb-3 opacity-30">📅</span>
+                                <p>Tiada aktiviti penting pada tarikh ini.</p>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+// --- KOMPONEN BARU: UNJURAN ALIRAN TUNAI (CASH FLOW) ---
+const CashFlowWidget = ({ data }) => {
+    const chartRef = useRef(null);
+
+    // 1. LOGIK PENGIRAAN UNJURAN
+    const projectionData = useMemo(() => {
+        const today = new Date();
+        const currentMonth = today.getMonth();
+        const currentYear = today.getFullYear();
+        
+        // Kita nak unjurkan untuk: Bulan Ini, Bulan Depan, Bulan Satu Lagi (3 Bulan)
+        const months = [];
+        const monthLabels = [];
+        
+        for (let i = 0; i < 3; i++) {
+            const d = new Date(currentYear, currentMonth + i, 1);
+            months.push(d); // Object Date untuk comparison
+            // Format Label: "Jan 2025"
+            monthLabels.push(d.toLocaleDateString('ms-MY', { month: 'short', year: 'numeric' }));
+        }
+
+        // Init Data: [Bulan 1, Bulan 2, Bulan 3]
+        const totals = [0, 0, 0];
+        const details = [[], [], []]; // Untuk simpan nama projek bagi setiap bulan
+
+        data.forEach(p => {
+            // Abaikan projek batal atau dah siap sepenuhnya (100% progress masa & fizikal)
+            if (p.LOGIK_SIAP === 'Batal' || (p.LOGIK_SIAP === 'Siap (CPC)' && p.PROGRESS_MASA >= 100)) return;
+
+            const kos = parseFloat(p.KOS_AKHIR || 0);
+            if (kos <= 0) return;
+
+            const sdlc = p.sdlc || {};
+            
+            // Helper untuk cek tarikh jatuh dalam bulan mana (0, 1, atau 2)
+            const checkMonthIndex = (dateStr) => {
+                if (!dateStr || dateStr === "-") return -1;
+                const parts = dateStr.split('/');
+                const dateObj = new Date(parts[2], parts[1] - 1, parts[0]);
+                
+                // Cari index bulan yang sepadan
+                return months.findIndex(m => 
+                    m.getMonth() === dateObj.getMonth() && 
+                    m.getFullYear() === dateObj.getFullYear()
+                );
+            };
+
+            // A. Milestone URS (30%)
+            // Guna Tarikh Baru jika ada, kalau tak guna Asal
+            const dateURS = sdlc["TARIKH URS BARU"] || sdlc["TARIKH URS ASAL"];
+            const idxURS = checkMonthIndex(dateURS);
+            if (idxURS >= 0) {
+                const amount = kos * 0.30;
+                totals[idxURS] += amount;
+                details[idxURS].push({ name: p.NAMA_PAPARAN, type: 'URS (30%)', val: amount });
+            }
+
+            // B. Milestone UAT (60%)
+            const dateUAT = sdlc["TARIKH UAT BARU"] || sdlc["TARIK UAT BARU"] || sdlc["TARIKH UAT ASAL"];
+            const idxUAT = checkMonthIndex(dateUAT);
+            if (idxUAT >= 0) {
+                const amount = kos * 0.60;
+                totals[idxUAT] += amount;
+                details[idxUAT].push({ name: p.NAMA_PAPARAN, type: 'UAT (60%)', val: amount });
+            }
+
+            // C. Milestone Go-Live (10%)
+            const dateLive = sdlc["TARIKH GO LIVE BARU"] || sdlc["TARIKH GO LIVE ASAL"];
+            const idxLive = checkMonthIndex(dateLive);
+            if (idxLive >= 0) {
+                const amount = kos * 0.10;
+                totals[idxLive] += amount;
+                details[idxLive].push({ name: p.NAMA_PAPARAN, type: 'CPC (10%)', val: amount });
+            }
+        });
+
+        return { labels: monthLabels, values: totals, details: details };
+    }, [data]);
+
+    // 2. RENDER CARTA (EFFECT)
+    useEffect(() => {
+        const ctx = document.getElementById("chartCashFlow");
+        if (ctx) {
+            if (chartRef.current) {
+                chartRef.current.destroy();
+            }
+
+            // Gradient Cantik
+            const ctx2d = ctx.getContext("2d");
+            const gradient = ctx2d.createLinearGradient(0, 0, 0, 300);
+            gradient.addColorStop(0, "#8b5cf6"); // Violet
+            gradient.addColorStop(1, "#ec4899"); // Pink
+
+            chartRef.current = new Chart(ctx, {
+                type: "bar",
+                data: {
+                    labels: projectionData.labels,
+                    datasets: [{
+                        label: "Unjuran Bayaran",
+                        data: projectionData.values,
+                        backgroundColor: gradient,
+                        borderRadius: 6,
+                        barThickness: 40,
+                        hoverBackgroundColor: "#7c3aed",
+                    }],
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            callbacks: {
+                                label: (c) => " RM " + new Intl.NumberFormat("ms-MY", { minimumFractionDigits: 2 }).format(c.raw),
+                            },
+                            backgroundColor: "rgba(17, 24, 39, 0.9)",
+                            padding: 12,
+                            cornerRadius: 8,
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            grid: { color: "#f1f5f9" },
+                            ticks: {
+                                callback: (val) => "RM" + (val / 1000) + "k", // Format ribu
+                                font: { size: 10 }
+                            }
+                        },
+                        x: {
+                            grid: { display: false },
+                            ticks: { font: { weight: 'bold' } }
+                        }
+                    }
+                },
+            });
+        }
+        return () => { if (chartRef.current) chartRef.current.destroy(); };
+    }, [projectionData]);
+
+    // UI HELPER: Format RM
+    const fmt = (v) => "RM " + v.toLocaleString("en-MY", { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+
+    return (
+        <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-xl mb-8 relative overflow-hidden group">
+            
+            {/* Header */}
+            <div className="flex justify-between items-end mb-6 relative z-10">
+                <div>
+                    <div className="flex items-center gap-2 mb-1">
+                        <span className="p-1.5 bg-purple-100 text-purple-600 rounded-lg">
+                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                        </span>
+                        <h3 className="text-sm font-black text-slate-700 uppercase tracking-widest">Unjuran Aliran Tunai</h3>
+                    </div>
+                    <p className="text-[10px] text-slate-400 font-medium">Jangkaan komitmen pembayaran untuk 3 bulan akan datang berdasarkan milestone projek.</p>
+                </div>
+                <div className="text-right">
+                    <div className="text-[10px] font-bold text-slate-400 uppercase">Jumlah 3 Bulan</div>
+                    <div className="text-2xl font-black text-transparent bg-clip-text bg-gradient-to-r from-purple-600 to-pink-500">
+                        {fmt(projectionData.values.reduce((a,b)=>a+b, 0))}
+                    </div>
+                </div>
+            </div>
+
+            {/* Content Grid */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                
+                {/* KIRI: CARTA */}
+                <div className="lg:col-span-2 h-48 relative z-10">
+                    <canvas id="chartCashFlow"></canvas>
+                </div>
+
+                {/* KANAN: LIST BREAKDOWN */}
+                <div className="lg:col-span-1 bg-slate-50 rounded-2xl p-4 border border-slate-100 overflow-y-auto max-h-48 custom-scroll relative z-10">
+                    <h4 className="text-[10px] font-black text-slate-400 uppercase mb-3 border-b border-slate-200 pb-2">Perincian Bulan Terdekat</h4>
+                    <div className="space-y-3">
+                        {/* Papar detail untuk bulan pertama sahaja (Immediate action) */}
+                        {projectionData.details[0].length > 0 ? (
+                            projectionData.details[0].map((item, i) => (
+                                <div key={i} className="flex justify-between items-center group/item">
+                                    <div className="w-[70%]">
+                                        <div className="text-[10px] font-bold text-slate-700 truncate" title={item.name}>{item.name}</div>
+                                        <div className="text-[9px] text-purple-500 font-bold">{item.type}</div>
+                                    </div>
+                                    <div className="text-[10px] font-mono font-black text-slate-600 bg-white px-1.5 py-0.5 rounded border border-slate-200">
+                                        {fmt(item.val)}
+                                    </div>
+                                </div>
+                            ))
+                        ) : (
+                            <div className="text-center py-4 text-[10px] text-slate-400 italic">Tiada tuntutan dijangka bulan ini.</div>
+                        )}
+                    </div>
+                </div>
+            </div>
+
+            {/* Hiasan Latar */}
+            <div className="absolute top-0 right-0 w-64 h-64 bg-purple-500/5 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2 pointer-events-none"></div>
+        </div>
+    );
+};
+
+// --- KOMPONEN BARU: PETA HABA RISIKO (RISK HEATMAP) ---
+const RiskHeatmapWidget = ({ data }) => {
+    const [selectedCell, setSelectedCell] = useState(null); // { label, projects, color }
+
+    // 1. LOGIK PENGELASAN RISIKO AUTOMATIK
+    const matrixData = useMemo(() => {
+        // Grid 3x3: [High-Low, High-Med, High-High, ...]
+        // Format Key: "IMPACT-PROBABILITY" (e.g., "HIGH-HIGH")
+        const grid = {
+            "HIGH-HIGH": [], "HIGH-MED": [], "HIGH-LOW": [],
+            "MED-HIGH": [],  "MED-MED":  [], "MED-LOW":  [],
+            "LOW-HIGH":  [], "LOW-MED":  [], "LOW-LOW":  []
+        };
+
+        data.forEach(p => {
+            // Abaikan projek batal atau dah siap sepenuhnya
+            if (p.LOGIK_SIAP === 'Batal' || (p.LOGIK_SIAP === 'Siap (CPC)' && p.PROGRESS_MASA >= 100)) return;
+
+            // A. TENTUKAN IMPAK (Y-AXIS) - Berdasarkan Kos
+            const kos = parseFloat(p.KOS_AKHIR ? p.KOS_AKHIR.toString().replace(/,/g, "") : 0);
+            let impact = "LOW";
+            if (kos > 500000) impact = "HIGH";
+            else if (kos > 50000) impact = "MED";
+
+            // B. TENTUKAN KEBARANGKALIAN (X-AXIS) - Berdasarkan Kesihatan
+            // Guna logik gap yang sama macam ProjectCard
+            const finScore = parseFloat(p.PROGRESS_MASA || 0);
+            
+            // Kira % Masa (Solid Bar)
+            const today = new Date(); today.setHours(0,0,0,0);
+            const dMula = p["TARIKH MULA"] ? new Date(p["TARIKH MULA"].split('/')[2], p["TARIKH MULA"].split('/')[1]-1, p["TARIKH MULA"].split('/')[0]) : null;
+            const dTamat = p["EOT"] ? new Date(p["EOT"].split('/')[2], p["EOT"].split('/')[1]-1, p["EOT"].split('/')[0]) : 
+                           (p["TARIKH SIAP"] ? new Date(p["TARIKH SIAP"].split('/')[2], p["TARIKH SIAP"].split('/')[1]-1, p["TARIKH SIAP"].split('/')[0]) : null);
+            
+            let timePercent = 0;
+            if (dMula && dTamat) {
+                const total = dTamat - dMula;
+                const elapsed = today - dMula;
+                if (total > 0) timePercent = (elapsed / total) * 100;
+            }
+            if (timePercent > 100) timePercent = 100;
+            if (timePercent < 0) timePercent = 0;
+
+            const gap = timePercent - finScore;
+            
+            let prob = "LOW";
+            // Jika dah Overrun tarikh -> High Prob
+            if (dTamat && today > dTamat) prob = "HIGH";
+            // Jika Gap besar -> High Prob
+            else if (gap > 30) prob = "HIGH";
+            // Jika Gap sederhana -> Med Prob
+            else if (gap > 15) prob = "MED";
+
+            // Masukkan ke dalam Grid
+            const key = `${impact}-${prob}`;
+            if (grid[key]) {
+                grid[key].push({
+                    name: p.NAMA_PAPARAN,
+                    kos: kos,
+                    gap: gap,
+                    status: p.LOGIK_SIAP,
+                    pic: p.PEGAWAI_NAMA
+                });
+            }
+        });
+
+        return grid;
+    }, [data]);
+
+    // UI Helper: Warna Cell
+    const getCellColor = (type) => {
+        switch(type) {
+            case "HIGH-HIGH": return "bg-red-600 text-white border-red-500 shadow-red-500/50"; // ZON BAHAYA
+            case "HIGH-MED": 
+            case "MED-HIGH": return "bg-orange-500 text-white border-orange-400 shadow-orange-500/50"; // ZON AMARAN
+            case "MED-MED":
+            case "LOW-HIGH": 
+            case "HIGH-LOW": return "bg-yellow-400 text-yellow-900 border-yellow-300 shadow-yellow-500/30"; // ZON SEDERHANA
+            default: return "bg-emerald-500 text-white border-emerald-400 shadow-emerald-500/30"; // ZON SELAMAT
+        }
+    };
+
+    const getCellLabel = (type) => {
+        if (type === "HIGH-HIGH") return "KRITIKAL";
+        if (type.includes("HIGH") || type === "MED-MED") return "PERHATIAN";
+        return "RUTIN";
+    };
+
+    const fmtMoney = (val) => "RM " + val.toLocaleString("en-MY", { compactDisplay: "short", notation: "compact" });
+
+    return (
+        <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-xl mb-8 flex flex-col md:flex-row gap-8">
+            
+            {/* KIRI: THE MATRIX GRID */}
+            <div className="flex-1">
+                <div className="flex items-center gap-3 mb-4">
+                    <span className="p-2 bg-red-100 text-red-600 rounded-lg">
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
+                    </span>
+                    <div>
+                        <h3 className="text-sm font-black text-slate-800 uppercase tracking-widest">Matriks Risiko Projek</h3>
+                        <p className="text-[10px] text-slate-400 font-medium">Analisis Impak (Kos) vs Prestasi</p>
+                    </div>
+                </div>
+
+                <div className="relative pl-8 pb-8">
+                    {/* Y-Axis Label */}
+                    <div className="absolute left-0 top-0 bottom-8 w-6 flex items-center justify-center">
+                        <span className="-rotate-90 text-[9px] font-black text-slate-400 uppercase tracking-widest whitespace-nowrap">Impak (Nilai)</span>
+                    </div>
+
+                    {/* THE GRID */}
+                    <div className="grid grid-cols-3 gap-2 h-64">
+                        {/* ROW 1: HIGH IMPACT */}
+                        {["HIGH-LOW", "HIGH-MED", "HIGH-HIGH"].map(key => (
+                            <div key={key} onClick={() => setSelectedCell({id: key, list: matrixData[key], color: getCellColor(key)})} 
+                                 className={`relative rounded-xl border-2 flex flex-col items-center justify-center cursor-pointer transition-all hover:scale-105 active:scale-95 group ${getCellColor(key)} ${selectedCell?.id === key ? 'ring-4 ring-offset-2 ring-slate-300 scale-105 z-10' : 'opacity-90 hover:opacity-100'}`}>
+                                <span className="text-2xl font-black drop-shadow-md">{matrixData[key].length}</span>
+                                {key === "HIGH-HIGH" && matrixData[key].length > 0 && <span className="absolute top-1 right-1 flex h-2 w-2"><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-75"></span><span className="relative inline-flex rounded-full h-2 w-2 bg-white"></span></span>}
+                            </div>
+                        ))}
+                        {/* ROW 2: MED IMPACT */}
+                        {["MED-LOW", "MED-MED", "MED-HIGH"].map(key => (
+                            <div key={key} onClick={() => setSelectedCell({id: key, list: matrixData[key], color: getCellColor(key)})}
+                                 className={`rounded-xl border-2 flex flex-col items-center justify-center cursor-pointer transition-all hover:scale-105 group ${getCellColor(key)} ${selectedCell?.id === key ? 'ring-4 ring-offset-2 ring-slate-300 scale-105 z-10' : 'opacity-90 hover:opacity-100'}`}>
+                                <span className="text-xl font-black drop-shadow-sm">{matrixData[key].length}</span>
+                            </div>
+                        ))}
+                        {/* ROW 3: LOW IMPACT */}
+                        {["LOW-LOW", "LOW-MED", "LOW-HIGH"].map(key => (
+                            <div key={key} onClick={() => setSelectedCell({id: key, list: matrixData[key], color: getCellColor(key)})}
+                                 className={`rounded-xl border-2 flex flex-col items-center justify-center cursor-pointer transition-all hover:scale-105 group ${getCellColor(key)} ${selectedCell?.id === key ? 'ring-4 ring-offset-2 ring-slate-300 scale-105 z-10' : 'opacity-90 hover:opacity-100'}`}>
+                                <span className="text-lg font-bold drop-shadow-sm">{matrixData[key].length}</span>
+                            </div>
+                        ))}
+                    </div>
+
+                    {/* X-Axis Label */}
+                    <div className="absolute left-8 right-0 bottom-0 h-6 flex items-center justify-center gap-12 text-[9px] font-black text-slate-400 uppercase tracking-widest pt-2">
+                        <span className="flex-1 text-center">Stabil</span>
+                        <span className="flex-1 text-center">Perlahan</span>
+                        <span className="flex-1 text-center text-red-400">Masalah</span>
+                    </div>
+                </div>
+            </div>
+
+            {/* KANAN: DETAIL PANEL */}
+            <div className="w-full md:w-80 bg-slate-50 rounded-2xl p-4 border border-slate-100 flex flex-col h-80">
+                <div className="mb-3 pb-2 border-b border-slate-200">
+                    <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Perincian Zon</h4>
+                    {selectedCell ? (
+                        <div className={`mt-1 text-xs font-black px-2 py-1 rounded w-fit uppercase ${selectedCell.color.replace('hover:opacity-100','').replace('opacity-90','')}`}>
+                            {getCellLabel(selectedCell.id)} ({selectedCell.list.length})
+                        </div>
+                    ) : (
+                        <div className="mt-1 text-xs font-bold text-slate-400 italic">Pilih kotak untuk lihat senarai</div>
+                    )}
+                </div>
+
+                <div className="flex-1 overflow-y-auto custom-scroll pr-1 space-y-2">
+                    {selectedCell && selectedCell.list.length > 0 ? (
+                        selectedCell.list.map((p, i) => (
+                            <div key={i} className="bg-white p-2.5 rounded-lg border border-slate-200 shadow-sm hover:border-indigo-300 transition-colors group">
+                                <div className="text-[10px] font-bold text-slate-700 leading-tight group-hover:text-indigo-600 line-clamp-2 mb-1">{p.name}</div>
+                                <div className="flex justify-between items-center">
+                                    <span className="text-[9px] font-mono font-black text-slate-400 bg-slate-100 px-1.5 rounded">{fmtMoney(p.kos)}</span>
+                                    {p.gap > 0 ? (
+                                        <span className="text-[8px] font-bold text-red-500 bg-red-50 px-1.5 py-0.5 rounded border border-red-100">-{Math.round(p.gap)}%</span>
+                                    ) : (
+                                        <span className="text-[8px] font-bold text-emerald-500 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-100">OK</span>
+                                    )}
+                                </div>
+                                <div className="text-[8px] text-slate-400 mt-1 truncate">PIC: {p.pic}</div>
+                            </div>
+                        ))
+                    ) : (
+                        <div className="h-full flex flex-col items-center justify-center text-slate-300 opacity-50">
+                            <svg className="w-10 h-10 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 15l-2 5L9 9l11 4-5 2zm0 0l5 5M7.188 2.239l.777 2.897M5.136 7.965l-2.898-.777M13.95 4.05l-2.122 2.122m-5.657 5.656l-2.12 2.122"></path></svg>
+                            <span className="text-[10px] uppercase font-bold text-center">Klik pada grid<br/>untuk data</span>
+                        </div>
+                    )}
+                </div>
+            </div>
+        </div>
+    );
+};
+
+// --- 7. KOMPONEN: GAMIFICATION SECTION (FINAL: ANIMATED + SHIMMER + FORENSIK) ---
+
+// A. Komponen Kecil: Animasi Nombor (Rolling Number)
+const CountUp = ({ end, duration = 2000, prefix = "", suffix = "" }) => {
+    const [count, setCount] = React.useState(0);
+
+    React.useEffect(() => {
+        let startTime = null;
+        let animationFrameId; // Simpan ID animation frame
+
+        const start = 0;
+        
+        const step = (timestamp) => {
+            if (!startTime) startTime = timestamp;
+            const progress = Math.min((timestamp - startTime) / duration, 1);
+            // Easing function (easeOutExpo) supaya gerak laju kemudian slow
+            const easeValue = progress === 1 ? 1 : 1 - Math.pow(2, -10 * progress);
+            
+            setCount(Math.floor(easeValue * (end - start) + start));
+
+            if (progress < 1) {
+                animationFrameId = window.requestAnimationFrame(step);
+            }
+        };
+        
+        animationFrameId = window.requestAnimationFrame(step);
+
+        // CLEANUP FUNCTION: Batalkan animation frame bila unmount
+        return () => {
+            if (animationFrameId) {
+                window.cancelAnimationFrame(animationFrameId);
+            }
+        };
+    }, [end, duration]);
+
+    return <span>{prefix}{count.toLocaleString()}{suffix}</span>;
+};
+
+// --- 7. KOMPONEN: GAMIFICATION SECTION (ICON LAPTOP KECIL + LOGIK FORENSIK) ---
+
 const GamificationSection = ({ data, selectedYear }) => {
 
-    // --- 1. LOGIK PEMPROSESAN DATA ---
+    // A. Komponen Animasi Nombor
+    const CountUp = ({ end, duration = 2000 }) => {
+        const [count, setCount] = useState(0);
+
+        useEffect(() => {
+            let startTime = null;
+            let animationFrameId; // Simpan ID
+            const start = 0;
+
+            const step = (timestamp) => {
+                if (!startTime) startTime = timestamp;
+                const progress = Math.min((timestamp - startTime) / duration, 1);
+                const easeValue = progress === 1 ? 1 : 1 - Math.pow(2, -10 * progress);
+                setCount(Math.floor(easeValue * (end - start) + start));
+                if (progress < 1) {
+                    animationFrameId = window.requestAnimationFrame(step);
+                }
+            };
+            
+            animationFrameId = window.requestAnimationFrame(step);
+
+            // Cleanup
+            return () => {
+                window.cancelAnimationFrame(animationFrameId);
+            };
+        }, [end, duration]);
+
+        return <span>{count.toLocaleString()}</span>;
+    };
+
+    // B. Logik Utama
     const officerStats = useMemo(() => {
+        if (!data || !Array.isArray(data)) return [];
+
         const stats = {};
 
         const cleanMoney = (val) => {
@@ -448,17 +1138,24 @@ const GamificationSection = ({ data, selectedYear }) => {
             return p.length === 3 ? new Date(p[2], p[1]-1, p[0]) : null;
         };
 
-        data.forEach((r) => {
-            // Filter Tahun
-            const projectYear = r["TAHUN RANCANG"] ? r["TAHUN RANCANG"].toString().trim() : "";
-            if (selectedYear !== "All" && projectYear !== selectedYear.toString()) return; 
+        const getDelayDays = (actualStr, targetStr) => {
+            const actual = parseDateLocal(actualStr);
+            const target = parseDateLocal(targetStr);
+            if (!actual || !target) return 0;
+            const diffTime = actual.getTime() - target.getTime();
+            return Math.ceil(diffTime / (1000 * 60 * 60 * 24)); 
+        };
 
-            // Filter Kategori
+        const targetYear = selectedYear ? String(selectedYear) : "All";
+
+        data.forEach((r) => {
+            const projectYear = r["TAHUN RANCANG"] ? String(r["TAHUN RANCANG"]).trim() : "";
+            if (targetYear !== "All" && projectYear !== targetYear) return; 
+
             const cat = (r["KATEGORI PERKHIDMATAN"] || "").toUpperCase();
             const isTargetCategory = cat.includes("PEMBANGUNAN") || cat.includes("PENAMBAHBAIKAN") || cat.includes("BINA");
             if (!isTargetCategory) return;
 
-            // Filter Pegawai
             const rawNames = r["PEGAWAI BERTANGGUNGJAWAB"] || "";
             if (!rawNames || rawNames === "-") return;
             
@@ -467,10 +1164,10 @@ const GamificationSection = ({ data, selectedYear }) => {
             names.forEach(name => {
                 if (!stats[name]) {
                     stats[name] = { 
-                        name: name, 
+                        name: name,
                         totalPlanned: 0, 
                         totalStarted: 0,
-                        accumulatedPoints: 0, // Kumpul mata kualiti di sini
+                        weightedScoreSum: 0, 
                         totalValue: 0, 
                         healthVarianceSum: 0,
                         completedProjects: 0,
@@ -479,121 +1176,130 @@ const GamificationSection = ({ data, selectedYear }) => {
                 }
 
                 stats[name].totalPlanned++;
+                const projectCost = cleanMoney(r.KOS_AKHIR || r.JUMLAH);
+                const effectiveCost = projectCost > 0 ? projectCost : 0;
                 
                 let hasStarted = false;
-                let projectHealthPoints = 0; // Mata untuk projek ini (0-100)
-                let variance = 0;
+                let projectHealthPoints = 0; 
+                let statusLabel = "Belum Mula"; 
 
-                // LOGIK KUALITI (PROJECT HEALTH SCORING)
+                // LOGIK FORENSIK
                 if (r["TARIKH MULA"] && r["TARIKH MULA"] !== "-" && r["TARIKH MULA"].trim() !== "") {
                     stats[name].totalStarted++;
                     hasStarted = true;
-                    
-                    // Kira Fizikal vs Masa
-                    let timeScore = 0;
-                    let physScore = 0;
-                    
-                    const dStart = parseDateLocal(r["TARIKH MULA"]);
-                    const dEnd = parseDateLocal(r["EOT"] || r["TARIKH SIAP"]);
-                    const today = new Date();
+                    projectHealthPoints = 100; 
 
-                    if (dStart && dEnd) {
-                        const totalDuration = dEnd.getTime() - dStart.getTime();
-                        const elapsed = today.getTime() - dStart.getTime();
-                        timeScore = elapsed <= 0 ? 0 : (elapsed >= totalDuration ? 100 : Math.round((elapsed/totalDuration)*100));
-                    }
-
-                    // SDLC Milestone Points
                     const sdlc = r.sdlc || {};
-                    if (sdlc["TARIKH URS SEBENAR"]) physScore = 30;
-                    if (sdlc["TARIKH UAT SEBENAR"]) physScore = 80;
-                    if (sdlc["TARIKH GO LIVE SEBENAR"] || r["TARIKH SELESAI"]) physScore = 100;
-                    
-                    // Manual Progress Override
-                    const manual = r.PROGRESS_MASA ? parseFloat(r.PROGRESS_MASA) : 0;
-                    if (manual > physScore) physScore = manual;
-                    
-                    // Override jika siap
-                    if (r["TARIKH SELESAI"]) { physScore = 100; timeScore = 100; }
+                    const today = new Date();
+                    const dEnd = parseDateLocal(r["EOT"] || r["TARIKH SIAP"]);
+                    const dActualFinish = parseDateLocal(r["TARIKH SELESAI"]);
 
-                    variance = physScore - timeScore;
-                    stats[name].healthVarianceSum += variance;
-
-                    // --- SISTEM MATA KUALITI (GEMPAK LOGIC) ---
-                    if (physScore === 100) {
-                        projectHealthPoints = 100; // Siap = Markah Penuh
-                    } else if (variance >= 0) {
-                        projectHealthPoints = 95; // Ikut Jadual / Awal = Cemerlang
-                    } else if (variance >= -10) {
-                        projectHealthPoints = 80; // Lewat Sikit = Masih OK
-                    } else if (variance >= -20) {
-                        projectHealthPoints = 60; // Lewat = Markah Lulus Sahaja
+                    if (dActualFinish) {
+                        stats[name].completedProjects++;
+                        const finishDelay = getDelayDays(r["TARIKH SELESAI"], r["EOT"] || r["TARIKH SIAP"]);
+                        if (finishDelay > 0) {
+                            projectHealthPoints -= 15; 
+                            statusLabel = `SIAP LEWAT ${finishDelay} HARI`;
+                            stats[name].healthVarianceSum += 50; 
+                        } else {
+                            statusLabel = "SIAP CEMERLANG";
+                            stats[name].healthVarianceSum += 100; 
+                        }
+                    } else if (dEnd && today > dEnd) {
+                        projectHealthPoints = 40; 
+                        statusLabel = "OVERRUN";
+                        stats[name].healthVarianceSum -= 50; 
                     } else {
-                        projectHealthPoints = 40; // Sakit = Gagal
+                        statusLabel = "ON-TRACK";
+                        let penalty = 0;
+
+                        const targetURS = sdlc["TARIKH URS BARU"] || sdlc["TARIKH URS ASAL"];
+                        if (targetURS) {
+                            if (sdlc["TARIKH URS SEBENAR"]) {
+                                if (getDelayDays(sdlc["TARIKH URS SEBENAR"], targetURS) > 0) {
+                                    penalty += 10;
+                                    statusLabel = "ISU: URS LEWAT";
+                                }
+                            } else {
+                                const dTarget = parseDateLocal(targetURS);
+                                if (dTarget && today > dTarget) {
+                                    penalty += 20;
+                                    statusLabel = "LEWAT URS";
+                                }
+                            }
+                        }
+
+                        const targetUAT = sdlc["TARIKH UAT BARU"] || sdlc["TARIKH UAT ASAL"];
+                        if (targetUAT) {
+                            if (sdlc["TARIKH UAT SEBENAR"]) {
+                                if (getDelayDays(sdlc["TARIKH UAT SEBENAR"], targetUAT) > 0) {
+                                    penalty += 10;
+                                    if(!statusLabel.includes("URS")) statusLabel = "ISU: UAT LEWAT";
+                                }
+                            } else {
+                                const dTarget = parseDateLocal(targetUAT);
+                                if (dTarget && today > dTarget) {
+                                    penalty += 20;
+                                    statusLabel = "LEWAT UAT";
+                                }
+                            }
+                        }
+
+                        projectHealthPoints -= penalty;
+                        if (projectHealthPoints < 0) projectHealthPoints = 0;
+                        
+                        if (projectHealthPoints >= 90) stats[name].healthVarianceSum += 100;
+                        else if (projectHealthPoints >= 50) stats[name].healthVarianceSum += 50;
+                        else stats[name].healthVarianceSum -= 20;
                     }
-                } else {
-                    // Projek tak mula lagi = 0 Markah
-                    projectHealthPoints = 0;
                 }
 
-                // Tambah mata ke tabung pegawai
-                stats[name].accumulatedPoints += projectHealthPoints;
-                stats[name].totalValue += cleanMoney(r.KOS_AKHIR || r.JUMLAH);
-
-                if (r["TARIKH SELESAI"] || (r.LOGIK_SIAP && r.LOGIK_SIAP.includes("Siap"))) {
-                    stats[name].completedProjects++;
-                }
+                stats[name].weightedScoreSum += (projectHealthPoints * effectiveCost);
+                stats[name].totalValue += effectiveCost;
 
                 stats[name].projects.push({ 
                     title: r.NAMA_PAPARAN, 
                     started: hasStarted,
-                    variance: variance, 
-                    healthPoints: projectHealthPoints, // Simpan untuk tooltip
+                    statusLabel: statusLabel,
+                    healthPoints: projectHealthPoints, 
                     kos: cleanMoney(r.KOS_AKHIR || r.JUMLAH)
                 });
             });
         });
 
-        // --- 2. TENTUKAN SKOR AKHIR (PERCENTAGE) ---
         return Object.values(stats).map(officer => {
-            
-            // FORMULA GEMPAK: (Jumlah Mata Kualiti / (Jumlah Projek Rancang * 100)) * 100
-            // Ini bermakna, denominator adalah Jumlah Rancang. Kalau tak mula, dia tarik markah ke bawah.
             let finalPercentage = 0;
-            if (officer.totalPlanned > 0) {
-                finalPercentage = (officer.accumulatedPoints / officer.totalPlanned); 
-                // accumulatedPoints dah dalam range 0-100 per projek. 
-                // Contoh: Rancang 2. Projek A (100) + Projek B (0 - tak mula) = 100 / 2 = 50%.
+            if (officer.totalValue > 0) {
+                finalPercentage = (officer.weightedScoreSum / officer.totalValue); 
             }
 
-            // Purata Kesihatan (Heartbeat) - Hanya untuk projek yang aktif
             const avgHealth = officer.totalStarted > 0 ? (officer.healthVarianceSum / officer.totalStarted) : 0;
-
             let heartClass = "text-emerald-500 animate-heartbeat";
             let heartLabel = "SIHAT";
             
             if (officer.totalStarted === 0) {
                 heartClass = "text-slate-300"; heartLabel = "MENUNGGU";
-            } else if (avgHealth < -15) {
-                heartClass = "text-red-600 animate-heartbeat-fast"; heartLabel = "KRITIKAL";
             } else if (avgHealth < 0) {
+                heartClass = "text-red-600 animate-heartbeat-fast"; heartLabel = "KRITIKAL";
+            } else if (avgHealth < 50) {
                 heartClass = "text-amber-500 animate-heartbeat"; heartLabel = "LEWAT";
             }
 
-            // Tier Logic
-            let tierTitle = "MEMBER"; let tierSub = "BRONZE"; let rankColor = "bg-slate-400"; let badgeColor = "bg-slate-100 text-slate-600 border-slate-300";
+            let tierTitle = "HARAPAN"; let tierSub = "PERLU PANTAUAN"; 
+            let rankColor = "bg-slate-400"; 
+            let badgeColor = "bg-slate-100 text-slate-600 border-slate-300";
             
-            if (finalPercentage >= 85 && officer.totalValue > 300000) {
-                tierTitle = "PLATINUM"; tierSub = "ELITE"; rankColor = "bg-slate-900"; badgeColor = "bg-emerald-100 text-emerald-800 border-emerald-300 ring-1 ring-emerald-300";
-            } else if (finalPercentage >= 70 || officer.totalValue > 100000) {
-                tierTitle = "GOLD"; tierSub = "PRO"; rankColor = "bg-amber-500"; badgeColor = "bg-yellow-100 text-yellow-800 border-yellow-300 ring-1 ring-yellow-300";
-            } else if (finalPercentage >= 50) {
-                tierTitle = "SILVER"; tierSub = "ADVANCE"; rankColor = "bg-slate-500"; badgeColor = "bg-blue-100 text-blue-800 border-blue-300";
+            if (finalPercentage >= 90) {
+                tierTitle = "CEMERLANG"; tierSub = "PENERAJU"; rankColor = "bg-emerald-600"; badgeColor = "bg-emerald-100 text-emerald-800 border-emerald-300 ring-1 ring-emerald-300";
+            } else if (finalPercentage >= 75) {
+                tierTitle = "BAIK"; tierSub = "KONSISTEN"; rankColor = "bg-indigo-600"; badgeColor = "bg-indigo-50 text-indigo-800 border-indigo-300 ring-1 ring-indigo-300";
+            } else if (finalPercentage >= 60) {
+                tierTitle = "MEMUASKAN"; tierSub = "USAHA LAGI"; rankColor = "bg-amber-500"; badgeColor = "bg-amber-50 text-amber-800 border-amber-300";
             }
 
-            return { ...officer, percentage: finalPercentage, avgHealth, heartClass, heartLabel, tierTitle, tierSub, rankColor, badgeColor };
+            return { ...officer, percentage: Math.round(finalPercentage), avgHealth, heartClass, heartLabel, tierTitle, tierSub, rankColor, badgeColor };
         })
-        .sort((a, b) => b.percentage - a.percentage); // Sort ikut KPI Sebenar
+        .sort((a, b) => b.percentage - a.percentage); 
 
     }, [data, selectedYear]);
 
@@ -602,32 +1308,33 @@ const GamificationSection = ({ data, selectedYear }) => {
     const formatMoney = (val) => val.toLocaleString('ms-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
     const getRankStyle = (index) => { 
-        if (index === 0) return "bg-white border-t-8 border-yellow-400 shadow-[0_20px_50px_-12px_rgba(250,204,21,0.3)] scale-[1.02] z-10 ring-1 ring-yellow-100"; 
-        if (index === 1) return "bg-white border-t-8 border-slate-400 shadow-[0_20px_50px_-12px_rgba(148,163,184,0.3)]"; 
-        if (index === 2) return "bg-white border-t-8 border-orange-400 shadow-[0_20px_50px_-12px_rgba(251,146,60,0.3)]"; 
+        if (index === 0) return "bg-white border-t-8 border-emerald-500 shadow-[0_20px_50px_-12px_rgba(16,185,129,0.3)] scale-[1.02] z-10 ring-1 ring-emerald-100 relative overflow-hidden before:absolute before:inset-0 before:-translate-x-full before:animate-[shimmer_2s_infinite] before:bg-gradient-to-r before:from-transparent before:via-white/40 before:to-transparent before:z-0"; 
+        if (index === 1) return "bg-white border-t-8 border-indigo-500 shadow-[0_20px_50px_-12px_rgba(99,102,241,0.3)]"; 
+        if (index === 2) return "bg-white border-t-8 border-amber-400 shadow-[0_20px_50px_-12px_rgba(245,158,11,0.3)]"; 
         return "bg-slate-50 border border-slate-200"; 
     };
+    
+    // --- UBAH DI SINI: SIZE TUKAR KE 'text-3xl' (Lebih Kecil) ---
     const getMedal = (index) => { 
-        if (index === 0) return <span className="text-5xl filter drop-shadow-md cursor-default">👑</span>; 
-        if (index === 1) return <span className="text-5xl filter drop-shadow-md cursor-default">🥈</span>; 
-        if (index === 2) return <span className="text-5xl filter drop-shadow-md cursor-default">🥉</span>; 
-        return null; 
+        return <span className="text-3xl filter drop-shadow-md cursor-default">💻</span>; 
     };
 
     if (top3.length === 0) return null;
 
     return (
         <div className="space-y-8 mb-10 font-sans">
+            <style>{`@keyframes shimmer { 100% { transform: translateX(100%); } }`}</style>
+
             {/* HEADER BANNER */}
-            <div className="relative rounded-2xl p-6 bg-gradient-to-r from-slate-900 to-indigo-900 text-white shadow-xl overflow-hidden">
-                <div className="absolute right-0 top-0 h-full w-1/2 bg-white/5 skew-x-12 transform origin-bottom-left"></div>
+            <div className="relative rounded-2xl p-6 bg-gradient-to-r from-slate-900 to-indigo-900 text-white shadow-xl overflow-hidden group">
+                <div className="absolute right-0 top-0 h-full w-1/2 bg-white/5 skew-x-12 transform origin-bottom-left transition-transform duration-1000 group-hover:skew-x-0"></div>
                 <div className="relative z-10 flex flex-col md:flex-row justify-between items-center gap-4">
                     <div className="flex items-center gap-4">
                         <div className="p-3 bg-white/10 rounded-xl backdrop-blur-sm border border-white/20 shadow-inner">
-                            <svg className="w-8 h-8 text-yellow-400" fill="currentColor" viewBox="0 0 20 20"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" /></svg>
+                            <svg className="w-8 h-8 text-emerald-400" fill="currentColor" viewBox="0 0 20 20"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" /></svg>
                         </div>
                         <div>
-                            <h2 className="text-2xl font-black uppercase tracking-tight">Prestasi Projek BPM</h2>
+                            <h2 className="text-2xl font-black uppercase tracking-tight">Prestasi Pegawai Projek</h2>
                             <p className="text-sm text-indigo-200 font-medium">Analisis KPI Sebenar (Kualiti & Kuantiti) {selectedYear === "All" ? "" : selectedYear}</p>
                         </div>
                     </div>
@@ -638,82 +1345,69 @@ const GamificationSection = ({ data, selectedYear }) => {
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pt-4">
                 {top3.map((officer, index) => (
                     <div key={index} className={`relative group rounded-3xl p-6 transition-all duration-300 flex flex-col justify-between ${getRankStyle(index)}`}>
-                        {/* Header: Avatar & Nama */}
-                        <div className="flex justify-between items-start mb-6">
-                            <div className="flex items-center gap-4">
+                        {/* Header */}
+                        <div className="flex justify-between items-start mb-6 relative z-10">
+                            <div className="flex items-center gap-4 w-full">
                                 <div className={`w-16 h-16 rounded-2xl flex items-center justify-center text-2xl font-bold text-white shadow-md ${officer.rankColor} relative flex-shrink-0`}>
                                     {officer.name.charAt(0)}
                                     <div className="absolute -bottom-2 -right-2 bg-white rounded-full p-1 shadow border border-slate-100">
                                         <svg className={`w-4 h-4 ${officer.heartClass}`} fill="currentColor" viewBox="0 0 24 24"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>
                                     </div>
                                 </div>
-                                <div className="min-w-0">
-                                    <h3 className="font-black text-slate-800 text-sm leading-tight uppercase w-full line-clamp-2">{officer.name}</h3>
-                                    <div className={`inline-block mt-1 px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wide border ${officer.badgeColor}`}>
-                                        {officer.tierTitle} AGENT
+                                <div className="min-w-0 flex-1">
+                                    <h3 className="font-black text-slate-800 text-sm leading-tight uppercase w-full break-words mb-1">
+                                        {officer.name}
+                                    </h3>
+                                    <div className={`inline-block px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wide border ${officer.badgeColor}`}>
+                                        {officer.tierTitle}
                                     </div>
                                 </div>
                             </div>
-                            <div className="transform transition-transform group-hover:scale-125 duration-300">{getMedal(index)}</div>
+                            {/* IKON LAPTOP (KECIL) */}
+                            <div className="absolute top-6 right-6">{getMedal(index)}</div>
                         </div>
 
-                        {/* --- SKOR GERGASI (PRESTASI SEBENAR) --- */}
-                        <div className="text-center py-5 border-t border-b border-slate-100 bg-slate-50/50 rounded-xl mb-5 group-hover:bg-slate-100 transition-colors">
+                        {/* SKOR */}
+                        <div className="text-center py-5 border-t border-b border-slate-100 bg-slate-50/50 rounded-xl mb-5 group-hover:bg-slate-100 transition-colors relative z-10">
                             <div className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.25em] mb-1">Indeks Prestasi KPI</div>
                             <div className="flex items-center justify-center gap-1">
                                 <span className="text-6xl font-black text-slate-800 tracking-tighter drop-shadow-sm group-hover:text-indigo-700 transition-colors leading-none">
-                                    {Math.round(officer.percentage)}
+                                    <CountUp end={officer.percentage} />
                                 </span>
                                 <span className="text-xl font-black text-slate-400 mt-4">%</span>
                             </div>
-                            {/* Subtext: Kapasiti (2 Mula / 3 Rancang) */}
-                            <div className="text-xs font-bold text-slate-500 mt-2 bg-white px-3 py-1 rounded-full border border-slate-200 inline-block shadow-sm flex items-center justify-center gap-2">
-                                <span className={officer.totalStarted === officer.totalPlanned ? "text-emerald-600" : "text-amber-600"}>
-                                    {officer.totalStarted} Aktif
-                                </span>
-                                <span className="text-slate-300">/</span> 
-                                <span>{officer.totalPlanned} Rancang</span>
+                            <div className="text-xs font-bold text-slate-500 mt-2 bg-white px-3 py-1 rounded-full border border-slate-200 inline-block shadow-sm">
+                                {officer.totalStarted} Projek Aktif
                             </div>
                         </div>
 
-                        {/* METRIK SOKONGAN */}
-                        <div className="flex items-center justify-between gap-2 mb-2">
-                            <div className="p-2 w-1/2 bg-slate-50 rounded-lg border border-slate-100">
+                        {/* INFO BAWAH */}
+                        <div className="flex items-center justify-between gap-2 mb-2 relative z-10">
+                            <div className="p-2 w-full bg-slate-50 rounded-lg border border-slate-100 text-center">
                                 <div className="text-[8px] font-bold text-slate-400 uppercase">Nilai Portfolio</div>
-                                <div className="text-xs font-black text-slate-700 truncate">RM {formatMoney(officer.totalValue)}</div>
-                            </div>
-                            <div className="p-2 w-1/2 text-right">
-                                <div className="text-[8px] font-bold text-slate-400 uppercase">Kesihatan Projek</div>
-                                <div className={`text-xs font-black uppercase flex items-center justify-end gap-1 ${officer.heartClass}`}>
-                                    {officer.heartLabel}
-                                    <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 24 24"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>
-                                </div>
+                                <div className="text-xs font-black text-slate-700">RM {formatMoney(officer.totalValue)}</div>
                             </div>
                         </div>
 
-                        {/* DNA SKOR (HOVER DETAILS) */}
+                        {/* DNA HOVER */}
                         <div className="absolute inset-0 bg-white/95 backdrop-blur-xl rounded-3xl p-5 opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-20 flex flex-col border-2 border-indigo-100 shadow-2xl translate-y-4 group-hover:translate-y-0 pointer-events-none group-hover:pointer-events-auto">
                             <div className="flex items-center justify-between mb-3 pb-2 border-b border-slate-100">
                                 <h4 className="font-black text-slate-800 text-[10px] uppercase tracking-widest">DNA PRESTASI</h4>
-                                <div className="px-2 py-0.5 bg-indigo-50 rounded text-[9px] font-bold text-indigo-600">{Math.round(officer.percentage)} Mata</div>
+                                <div className="px-2 py-0.5 bg-indigo-50 rounded text-[9px] font-bold text-indigo-600">{officer.percentage} Markah</div>
                             </div>
                             <div className="space-y-2 overflow-y-auto custom-scroll flex-1">
                                 {officer.projects.map((p, i) => (
                                     <div key={i} className="bg-slate-50 rounded-lg p-2.5 border border-slate-200">
                                         <div className="flex justify-between items-start">
-                                            <div className="w-[70%]">
+                                            <div className="w-[65%]">
                                                 <div className="font-bold text-slate-700 text-[9px] leading-tight line-clamp-2">{p.title}</div>
                                                 <div className="text-[8px] text-slate-400 mt-0.5 font-mono">RM {formatMoney(p.kos)}</div>
                                             </div>
-                                            <div className="text-right">
-                                                {p.started ? (
-                                                    <span className={`block text-[9px] font-black ${p.healthPoints >= 90 ? 'text-emerald-600' : p.healthPoints >= 60 ? 'text-amber-600' : 'text-red-600'}`}>
-                                                        {p.healthPoints} Mata
-                                                    </span>
-                                                ) : (
-                                                    <span className="block text-[9px] font-black text-slate-400">0 Mata</span>
-                                                )}
-                                                <span className="text-[7px] text-slate-400 uppercase font-bold">{p.started ? (p.variance < 0 ? `Lewat ${Math.abs(p.variance)}%` : 'On-Track') : 'Belum Mula'}</span>
+                                            <div className="text-right w-[35%]">
+                                                <span className={`block text-[9px] font-black ${p.healthPoints >= 90 ? 'text-emerald-600' : p.healthPoints >= 50 ? 'text-amber-600' : 'text-red-600'}`}>
+                                                    {p.healthPoints} Mata
+                                                </span>
+                                                <span className="text-[7px] text-slate-400 uppercase font-bold truncate block">{p.statusLabel}</span>
                                             </div>
                                         </div>
                                     </div>
@@ -733,9 +1427,9 @@ const GamificationSection = ({ data, selectedYear }) => {
                             <div key={idx} className="bg-white p-3 rounded-xl border border-slate-200 flex items-center justify-between shadow-sm">
                                 <div className="flex items-center gap-3">
                                     <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-xs font-bold text-slate-500">#{idx + 4}</div>
-                                    <div>
+                                    <div className="min-w-0">
                                         <div className="text-[10px] font-black text-slate-700 uppercase truncate w-32">{off.name}</div>
-                                        <div className="text-[9px] text-slate-400">{off.totalStarted} / {off.totalPlanned} Projek</div>
+                                        <div className="text-[9px] text-slate-400 mt-0.5">{off.totalStarted} / {off.totalPlanned} Projek</div>
                                     </div>
                                 </div>
                                 <div className="flex items-center gap-2">
@@ -751,13 +1445,376 @@ const GamificationSection = ({ data, selectedYear }) => {
     );
 };
 
+// --- KOMPONEN BARU: SMART ASSISTANT (AI RINGKASAN) ---
+const SmartAssistantWidget = ({ data, onAction }) => {
+    const [insights, setInsights] = useState([]);
+    const [currentInsightIndex, setCurrentInsightIndex] = useState(0);
+
+    // 1. ENJIN AI (RULE-BASED ANALYSIS)
+    useEffect(() => {
+        const generateInsights = () => {
+            const list = [];
+            const today = new Date();
+            today.setHours(0,0,0,0);
+
+            // ANALISIS 1: PROJEK KRITIKAL (OVERRUN)
+            const overrunProjects = data.filter(p => {
+                if (p.LOGIK_SIAP === 'Siap (CPC)' || p.LOGIK_SIAP === 'Batal') return false;
+                const dEnd = p["EOT"] ? parseDate(p["EOT"]) : (p["TARIKH SIAP"] ? parseDate(p["TARIKH SIAP"]) : null);
+                return dEnd && today > dEnd;
+            });
+
+            if (overrunProjects.length > 0) {
+                list.push({
+                    type: "CRITICAL",
+                    icon: "🚨",
+                    title: "Amaran Kritikal",
+                    message: `Terdapat ${overrunProjects.length} projek yang telah melepasi tarikh siap (Overrun). Sila semak status EOT atau CPC segera.`,
+                    action: "Lihat Senarai Lewat"
+                });
+            }
+
+            // ANALISIS 2: KEWANGAN (BAKI KOMITMEN TINGGI)
+            const totalKos = data.reduce((acc, p) => acc + parseVal(p.KOS_AKHIR || 0), 0);
+            const totalBayar = data.reduce((acc, p) => acc + parseVal(p.JUMLAH_BAYARAN || 0), 0);
+            const baki = totalKos - totalBayar;
+            const burnRate = totalKos > 0 ? (totalBayar / totalKos) * 100 : 0;
+
+            if (burnRate < 50 && totalKos > 1000000) { // Contoh logic: Bajet besar tapi spend sikit
+                list.push({
+                    type: "FINANCE",
+                    icon: "💰",
+                    title: "Prestasi Belanja Rendah",
+                    message: `Kadar perbelanjaan keseluruhan baru mencapai ${Math.round(burnRate)}%. Baki komitmen RM ${(baki/1000000).toFixed(2)} Juta perlu dibelanjakan.`,
+                    action: "Analisis Cashflow"
+                });
+            }
+
+            // ANALISIS 3: TAMAT TEMPOH TERDEKAT (30 HARI)
+            const expiringSoon = data.filter(p => {
+                if (p.LOGIK_SIAP !== 'Dalam Jadual') return false;
+                const dEnd = p["EOT"] ? parseDate(p["EOT"]) : (p["TARIKH SIAP"] ? parseDate(p["TARIKH SIAP"]) : null);
+                if (!dEnd) return false;
+                const diffTime = dEnd - today;
+                const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                return diffDays > 0 && diffDays <= 30;
+            });
+
+            if (expiringSoon.length > 0) {
+                list.push({
+                    type: "WARNING",
+                    icon: "⏳",
+                    title: "Tamat Tempoh Terdekat",
+                    message: `${expiringSoon.length} projek akan tamat kontrak dalam masa 30 hari. Pastikan proses UAT/CPC sedang berjalan.`,
+                    action: "Lihat Kalendar"
+                });
+            }
+
+            // ANALISIS 4: EOT TINGGI
+            const eotProjects = data.filter(p => p["EOT"] && p["EOT"] !== "");
+            if (eotProjects.length > 5) { // Contoh threshold
+                 list.push({
+                    type: "INFO",
+                    icon: "📝",
+                    title: "Trend EOT",
+                    message: `Sebanyak ${eotProjects.length} projek telah diluluskan EOT tahun ini. Semak punca kelewatan utama.`,
+                    action: "Semak Laporan"
+                });
+            }
+
+            // DEFAULT: JIKA SEMUA OK
+            if (list.length === 0) {
+                list.push({
+                    type: "SUCCESS",
+                    icon: "✅",
+                    title: "Semua Terkawal",
+                    message: "Tiada isu kritikal dikesan buat masa ini. Teruskan prestasi cemerlang!",
+                    action: null
+                });
+            }
+
+            setInsights(list);
+        };
+
+        generateInsights();
+    }, [data]);
+
+    // Helper Date Parser (Sama macam main component)
+    const parseDate = (str) => {
+        if (!str) return null;
+        const p = str.split('/');
+        return new Date(p[2], p[1] - 1, p[0]);
+    };
+    const parseVal = (val) => val ? parseFloat(val.toString().replace(/,/g, "")) : 0;
+
+    // Auto Rotate Insights
+    useEffect(() => {
+        if (insights.length <= 1) return;
+        const interval = setInterval(() => {
+            setCurrentInsightIndex((prev) => (prev + 1) % insights.length);
+        }, 5000); // Tukar setiap 5 saat
+        return () => clearInterval(interval);
+    }, [insights]);
+
+    if (insights.length === 0) return null;
+
+    const activeInsight = insights[currentInsightIndex];
+
+    const getStyle = (type) => {
+        switch(type) {
+            case "CRITICAL": return "bg-red-50 border-red-200 text-red-800";
+            case "WARNING": return "bg-amber-50 border-amber-200 text-amber-800";
+            case "FINANCE": return "bg-blue-50 border-blue-200 text-blue-800";
+            case "SUCCESS": return "bg-emerald-50 border-emerald-200 text-emerald-800";
+            default: return "bg-slate-50 border-slate-200 text-slate-800";
+        }
+    };
+
+    return (
+        <div className="mb-8 animate-fade-in">
+            {/* AI HEADER */}
+            <div className="flex items-center gap-2 mb-2 px-1">
+                <span className="relative flex h-3 w-3">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-3 w-3 bg-indigo-500"></span>
+                </span>
+                <span className="text-[10px] font-black text-indigo-500 uppercase tracking-widest">AI Smart Summary</span>
+            </div>
+
+            {/* MESSAGE CARD */}
+            <div className={`relative p-4 rounded-2xl border-2 shadow-sm transition-all duration-500 flex items-start gap-4 ${getStyle(activeInsight.type)}`}>
+                
+                {/* ICON */}
+                <div className="text-3xl filter drop-shadow-sm animate-bounce-slow">
+                    {activeInsight.icon}
+                </div>
+
+                {/* TEXT CONTENT */}
+                <div className="flex-1">
+                    <h4 className="text-sm font-black uppercase tracking-tight mb-1">{activeInsight.title}</h4>
+                    <p className="text-xs font-medium opacity-90 leading-relaxed">
+                        {activeInsight.message}
+                    </p>
+                </div>
+
+                {/* ACTION BUTTON (JIKA ADA) */}
+                {activeInsight.action && (
+                    <button
+                    onClick={() => onAction && onAction(activeInsight.action)}
+                    className="hidden sm:block px-4 py-2 bg-white/50 hover:bg-white border border-black/5 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all shadow-sm hover:shadow-md whitespace-nowrap">
+                        {activeInsight.action} →
+                    </button>
+                )}
+
+                {/* PAGINATION DOTS */}
+                <div className="absolute bottom-2 right-4 flex gap-1">
+                    {insights.map((_, i) => (
+                        <div 
+                            key={i} 
+                            className={`w-1.5 h-1.5 rounded-full transition-all ${i === currentInsightIndex ? 'bg-black/40 scale-125' : 'bg-black/10'}`}
+                        ></div>
+                    ))}
+                </div>
+            </div>
+        </div>
+    );
+};
+
+// --- KOMPONEN BARU: MODAL PERINCIAN PROJEK ---
+const ProjectDetailModal = ({ project, onClose }) => {
+    if (!project) return null;
+
+    // State untuk Tab (Default: Kronologi)
+    const [activeTab, setActiveTab] = useState('kronologi');
+
+    // Helper Format RM
+    const fmtRM = (val) => "RM " + parseFloat(val || 0).toLocaleString("en-MY", { minimumFractionDigits: 2 });
+
+    return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fade-in">
+            {/* Modal Container */}
+            <div className="bg-white w-full max-w-4xl max-h-[90vh] rounded-2xl shadow-2xl overflow-hidden flex flex-col border border-slate-200">
+                
+                {/* HEADER */}
+                <div className="p-6 border-b border-slate-100 flex justify-between items-start bg-slate-50/50">
+                    <div>
+                        <div className="flex items-center gap-2 mb-2">
+                            <span className="text-[10px] font-black uppercase tracking-widest text-indigo-500 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-100">
+                                {project["NO SEBUT HARGA"] || "TIADA RUJUKAN"}
+                            </span>
+                            <span className="text-[10px] font-bold text-slate-400 uppercase bg-white px-2 py-0.5 rounded border border-slate-200">
+                                {project.TAHUN_RANCANG || "2025"}
+                            </span>
+                        </div>
+                        <h2 className="text-xl md:text-2xl font-black text-slate-800 leading-tight">{project.NAMA_PAPARAN}</h2>
+                        <div className="flex items-center gap-2 mt-2 text-xs font-bold text-slate-500">
+                            <span>🏢 {project["SYARIKAT"] || "Tiada Syarikat"}</span>
+                            <span>•</span>
+                            <span>💰 {fmtRM(project.KOS_AKHIR)}</span>
+                        </div>
+                    </div>
+                    <button onClick={onClose} className="p-2 rounded-full hover:bg-slate-200 text-slate-400 hover:text-red-500 transition-colors">
+                        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                    </button>
+                </div>
+
+                {/* TABS NAVIGATION */}
+                <div className="flex border-b border-slate-100 px-6">
+                    {['kronologi', 'kewangan', 'info'].map(tab => (
+                        <button 
+                            key={tab}
+                            onClick={() => setActiveTab(tab)}
+                            className={`px-4 py-3 text-xs font-black uppercase tracking-wider border-b-2 transition-colors ${activeTab === tab ? 'border-indigo-500 text-indigo-600' : 'border-transparent text-slate-400 hover:text-slate-600'}`}
+                        >
+                            {tab === 'kronologi' ? '📜 Kronologi & Catatan' : tab === 'kewangan' ? '💸 Rekod Bayaran' : 'ℹ️ Info Pasukan'}
+                        </button>
+                    ))}
+                </div>
+
+                {/* CONTENT AREA (Scrollable) */}
+                <div className="flex-1 overflow-y-auto p-6 bg-slate-50/30">
+                    
+                    {/* TAB: KRONOLOGI */}
+                    {activeTab === 'kronologi' && (
+                        <div className="space-y-6">
+                            {project.notes && project.notes.length > 0 ? (
+                                project.notes.sort((a,b) => (b.TIMESTAMP || "").localeCompare(a.TIMESTAMP || "")).map((note, idx) => (
+                                    <div key={idx} className="flex gap-4 group">
+                                        <div className="flex flex-col items-center">
+                                            <div className="w-2.5 h-2.5 rounded-full bg-indigo-400 ring-4 ring-indigo-50 mb-1"></div>
+                                            <div className="w-0.5 flex-1 bg-slate-200 group-last:hidden"></div>
+                                        </div>
+                                        <div className="flex-1 pb-6">
+                                            <div className="bg-white p-4 rounded-xl border border-slate-100 shadow-sm hover:shadow-md transition-shadow">
+                                                <div className="flex justify-between items-start mb-2">
+                                                    <span className="text-[10px] font-bold text-slate-400 uppercase">{note.TIMESTAMP}</span>
+                                                    {note.PERKARA && <span className="text-[10px] font-black bg-slate-100 px-2 py-0.5 rounded text-slate-600">{note.PERKARA}</span>}
+                                                </div>
+                                                <p className="text-sm text-slate-700 whitespace-pre-line leading-relaxed">{note.CATATAN}</p>
+                                                {note["RUJUKAN SURAT"] && (
+                                                    <div className="mt-3 pt-2 border-t border-slate-50 flex items-center gap-2">
+                                                        <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Rujukan:</span>
+                                                        
+                                                        {note.SURAT_URL ? (
+                                                            /* JIKA ADA LINK: Papar sebagai Link Biru boleh klik */
+                                                            <a 
+                                                                href={note.SURAT_URL} 
+                                                                target="_blank" 
+                                                                rel="noopener noreferrer"
+                                                                className="flex items-center gap-1 text-[10px] font-black text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-100 hover:bg-indigo-600 hover:text-white transition-all group/link"
+                                                                title="Klik untuk lihat surat"
+                                                            >
+                                                                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"></path></svg>
+                                                                {note["RUJUKAN SURAT"]}
+                                                                <svg className="w-2.5 h-2.5 opacity-50 group-hover/link:translate-x-0.5 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path></svg>
+                                                            </a>
+                                                        ) : (
+                                                            /* JIKA TIADA LINK: Papar sebagai Text Biasa */
+                                                            <span className="text-[10px] font-mono font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded border border-slate-200">
+                                                                {note["RUJUKAN SURAT"]}
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </div>
+                                    </div>
+                                ))
+                            ) : (
+                                <div className="text-center py-10 text-slate-400 italic">Tiada catatan direkodkan.</div>
+                            )}
+                        </div>
+                    )}
+
+                    {/* TAB: KEWANGAN */}
+                    {activeTab === 'kewangan' && (
+                        <div>
+                            <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm mb-4">
+                                <table className="w-full text-left">
+                                    <thead className="bg-slate-50 border-b border-slate-200">
+                                        <tr>
+                                            <th className="px-4 py-3 text-[10px] font-black text-slate-500 uppercase">Tarikh</th>
+                                            <th className="px-4 py-3 text-[10px] font-black text-slate-500 uppercase">Perkara</th>
+                                            <th className="px-4 py-3 text-[10px] font-black text-slate-500 uppercase text-right">Jumlah (RM)</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-slate-100">
+                                        {project.financials && project.financials.length > 0 ? (
+                                            project.financials.map((fin, idx) => (
+                                                <tr key={idx} className="hover:bg-slate-50/50">
+                                                    <td className="px-4 py-3 text-xs font-mono text-slate-500">{fin["TARIKH PERAKUAN"]}</td>
+                                                    <td className="px-4 py-3 text-xs font-bold text-slate-700">{fin["PERKARA"]}</td>
+                                                    <td className="px-4 py-3 text-xs font-mono font-bold text-emerald-600 text-right">
+                                                        {(parseFloat(fin["JUMLAH"] || 0) + parseFloat(fin["SST"] || 0)).toLocaleString("en-MY", { minimumFractionDigits: 2 })}
+                                                    </td>
+                                                </tr>
+                                            ))
+                                        ) : (
+                                            <tr><td colSpan="3" className="px-4 py-8 text-center text-xs text-slate-400 italic">Tiada rekod pembayaran.</td></tr>
+                                        )}
+                                    </tbody>
+                                    <tfoot className="bg-slate-50 border-t border-slate-200">
+                                        <tr>
+                                            <td colSpan="2" className="px-4 py-3 text-xs font-black text-slate-600 text-right uppercase">Jumlah Bayaran Terkumpul</td>
+                                            <td className="px-4 py-3 text-sm font-black text-indigo-600 text-right">
+                                                {fmtRM(project.financials?.reduce((acc, curr) => acc + (parseFloat(curr.JUMLAH)||0) + (parseFloat(curr.SST)||0), 0))}
+                                            </td>
+                                        </tr>
+                                    </tfoot>
+                                </table>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* TAB: INFO */}
+                    {activeTab === 'info' && (
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+                                <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-3 border-b pb-2">Pegawai Bertanggungjawab</h4>
+                                <div className="flex flex-col gap-2">
+                                    {(project["PEGAWAI BERTANGGUNGJAWAB"] || "").split(',').map((name, i) => (
+                                        <div key={i} className="flex items-center gap-3">
+                                            <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-slate-400 font-bold text-xs border border-slate-200">
+                                                {name.trim().charAt(0)}
+                                            </div>
+                                            <span className="text-xs font-bold text-slate-700">{name.trim()}</span>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                            <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+                                <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-3 border-b pb-2">Butiran Kontrak</h4>
+                                <div className="space-y-2">
+                                    <div className="flex justify-between text-xs"><span className="text-slate-500">Tarikh Mula:</span> <span className="font-mono font-bold">{project["TARIKH MULA"]}</span></div>
+                                    <div className="flex justify-between text-xs"><span className="text-slate-500">Tarikh Siap Asal:</span> <span className="font-mono font-bold">{project["TARIKH SIAP"]}</span></div>
+                                    <div className="flex justify-between text-xs"><span className="text-slate-500">Tarikh Siap Semasa:</span> <span className="font-mono font-bold text-indigo-600">{project["TARIKH SIAP SEMASA_ISO"] ? new Date(project["TARIKH SIAP SEMASA_ISO"]).toLocaleDateString('en-GB') : "-"}</span></div>
+                                    <div className="flex justify-between text-xs pt-2 border-t border-dashed mt-2"><span className="text-slate-500">Vot:</span> <span className="font-mono font-bold text-slate-700">{project.VOT_NAMA || project.VOT}</span></div>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                </div>
+                
+                {/* FOOTER ACTIONS */}
+                <div className="p-4 bg-slate-50 border-t border-slate-200 text-right">
+                    <button onClick={onClose} className="px-5 py-2 bg-white border border-slate-300 rounded-lg text-xs font-bold text-slate-600 hover:bg-slate-100 transition-colors shadow-sm">
+                        Tutup
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+};
+
 // --- 6. KOMPONEN: DEVELOPMENT PLANNING BOARD (LAYOUT GEMPAK: PIPELINE & ACTION) ---
 const DevelopmentPlanningBoard = ({ data }) => {
 
     const currentYear = new Date().getFullYear().toString();
     const [selectedPlanYear, setSelectedPlanYear] = useState(currentYear);
+    const [searchTerm, setSearchTerm] = useState("");
+    const [selectedProject, setSelectedProject] = useState(null);
 
-    // --- UTILITIES (Sama Macam Tadi) ---
+    // --- UTILITIES ---
     const getSmartYear = (project) => {
         if (!project) return "";
         const keys = Object.keys(project);
@@ -796,14 +1853,32 @@ const DevelopmentPlanningBoard = ({ data }) => {
             const dataYear = rawYear ? rawYear.toString().trim() : "";
             const matchYear = dataYear === selectedPlanYear.toString();
             const cat = (r["KATEGORI PERKHIDMATAN"] || "").toUpperCase();
-            return matchYear && (
+            
+            const isDev = matchYear && (
                 cat.includes("PEMBANGUNAN") || cat.includes("BINA") || cat.includes("SISTEM") || 
                 cat.includes("PENAMBAHBAIKAN") || cat.includes("NAIK TARAF") || 
                 cat.includes("MIGRASI") || cat.includes("INTEGRASI") || 
                 cat.includes("CHANGE REQUEST") || cat.includes("CR")
             );
+
+            if (!isDev) return false;
+
+            if (searchTerm === "") return true;
+
+            const term = searchTerm.toLowerCase();
+            const textName = (r.NAMA_PAPARAN || "").toLowerCase();
+            const textRef = (r["NO SEBUT HARGA"] || "").toLowerCase();
+            const textComp = (r["SYARIKAT"] || "").toLowerCase(); // Carian nama syarikat juga!
+
+            return textName.includes(term) || textRef.includes(term) || textComp.includes(term);
         });
-    }, [data, selectedPlanYear]);
+    }, [data, selectedPlanYear, searchTerm]);
+
+    const stats = useMemo(() => {
+        const totalCount = filteredDevProjects.length;
+        const totalValue = filteredDevProjects.reduce((acc, curr) => acc + (parseFloat(curr.KOS_AKHIR || 0) || 0), 0);
+        return { totalCount, totalValue };
+    }, [filteredDevProjects]);
 
     const buckets = {
         planning: filteredDevProjects.filter(r => (!r["TARIKH MULA"] || r["TARIKH MULA"] === "") && !r.LOGIK_SIAP.includes("Siap")),
@@ -811,7 +1886,7 @@ const DevelopmentPlanningBoard = ({ data }) => {
         completed: filteredDevProjects.filter(r => r.LOGIK_SIAP.includes("Siap"))
     };
 
-    // --- SUB-KOMPONEN: TIMELINE STEP (Kekal Besar & Jelas) ---
+    // --- SUB-KOMPONEN: TIMELINE STEP ---
     const TimelineStep = ({ label, targetDate, actualDate, position, isRevised, extraInfo }) => {
         const tDate = parseDate(targetDate);
         const aDate = parseDate(actualDate);
@@ -872,7 +1947,6 @@ const DevelopmentPlanningBoard = ({ data }) => {
         );
     };
 
-    // --- KAD PERANCANGAN (NEW: SIMPLE CARD) ---
     const PlanningCard = ({ p }) => (
         <div className="bg-white p-3 rounded-lg border-l-4 border-slate-300 shadow-sm hover:shadow-md hover:border-slate-400 transition-all group h-full flex flex-col justify-between">
             <div>
@@ -886,449 +1960,397 @@ const DevelopmentPlanningBoard = ({ data }) => {
         </div>
     );
 
-    // --- KAD PROJEK DETAILED (PELAKSANAAN & SIAP) ---
-    const ProjectCard = ({ p, type }) => {
-        // ... (Logic yang sama seperti versi "Canggih" anda)
-        const tMula = p["TARIKH MULA"] || "-";
-        const tSiapAsal = p["TARIKH SIAP"] || "-";
-        const tEOT = p["EOT"] || null;
-        const kosAkhir = p.KOS_AKHIR ? p.KOS_AKHIR : p["JUMLAH"];
-        const voTambah = parseVal(p["VO TAMBAHAN"]);
+    // --- KEMASKINI: PROJECT CARD DENGAN HEALTH INDICATOR ---
+      const ProjectCard = ({ p, type, onClick }) => {
+          
+          // --- 1. DATA ASAS ---
+          const tMula = p["TARIKH MULA"] || "-";
+          const tSiapAsal = p["TARIKH SIAP"] || "-";
+          const tEOT = p["EOT"] || null;
+          const kosAkhir = p.KOS_AKHIR ? p.KOS_AKHIR : p["JUMLAH"];
+          const voTambah = parseVal(p["VO TAMBAHAN"]);
+          
+          // --- 2. DATA TIMELINE & SDLC ---
+          const sdlc = p.sdlc || {}; 
+          
+          const getTargetConfig = (dateBaru, dateAsal) => {
+              if (dateBaru && dateBaru !== "-") return { date: dateBaru, type: "(BARU)" };
+              return { date: dateAsal, type: "(ASAL)" };
+          };
+
+          const cfgURS = getTargetConfig(sdlc["TARIKH URS BARU"], sdlc["TARIKH URS ASAL"]);
+          const cfgUAT = getTargetConfig(sdlc["TARIKH UAT BARU"] || sdlc["TARIK UAT BARU"], sdlc["TARIKH UAT ASAL"]);
+          const cfgLive = getTargetConfig(sdlc["TARIKH GO LIVE BARU"], sdlc["TARIKH GO LIVE ASAL"]);
+
+          const urs = { target: cfgURS.date, actual: sdlc["TARIKH URS SEBENAR"] };
+          const uat = { target: cfgUAT.date, actual: sdlc["TARIKH UAT SEBENAR"] };
+          const live = { target: cfgLive.date, actual: sdlc["TARIKH GO LIVE SEBENAR"] };
+
+          const uatExtras = [];
+          if (sdlc["TARIKH LATIHAN"]) uatExtras.push({ label: 'LATIHAN', date: sdlc["TARIKH LATIHAN"] });
+          const liveExtras = [];
+          if (sdlc["TARIKH FA"]) liveExtras.push({ label: 'FA', date: sdlc["TARIKH FA"] });
+
+          // =================================================================================
+          // 3. LOGIK VISUAL & PENGIRAAN
+          // =================================================================================
+
+          const parseDateObj = (d) => d ? new Date(d.split('/')[2], d.split('/')[1]-1, d.split('/')[0]) : null;
+          const formatDate = (d) => d ? `${d.getDate()}/${d.getMonth()+1}/${d.getFullYear()}` : "-";
+          const today = new Date();
+          today.setHours(0,0,0,0);
+          
+          const dMula = parseDateObj(tMula);
+          const dContractEnd = parseDateObj(tEOT || tSiapAsal);
+          const dActualFinish = parseDateObj(p["TARIKH SELESAI"]);
+
+          // --- A. KIRA JUMLAH HARI & OVERRUN ---
+          let totalProjectDays = 0;
+          let dEffectiveEnd = dContractEnd; 
+          let isOverrun = false;
+
+          if (dMula && dContractEnd) {
+              if (dActualFinish) {
+                  if (dActualFinish.getTime() > dContractEnd.getTime()) {
+                      dEffectiveEnd = dActualFinish;
+                      isOverrun = true;
+                  }
+              } else if (today.getTime() > dContractEnd.getTime()) {
+                  dEffectiveEnd = today;
+                  isOverrun = true;
+              }
+              totalProjectDays = (dEffectiveEnd.getTime() - dMula.getTime());
+          }
+
+          const getPercent = (date) => {
+              if (!date || !dMula || totalProjectDays <= 0) return 0;
+              const elapsed = date.getTime() - dMula.getTime();
+              let pct = (elapsed / totalProjectDays) * 100;
+              return Math.min(Math.max(pct, 0), 100);
+          };
+
+          // --- B. LOGIK SOLID BAR (MASA BERJALAN) ---
+          let solidBarWidth = 0;
+          
+          if (dActualFinish) solidBarWidth = 100;
+          else if (isOverrun) solidBarWidth = 100;
+          else if (totalProjectDays > 0 && dMula) {
+              const daysElapsed = today.getTime() - dMula.getTime();
+              solidBarWidth = Math.min(Math.round((daysElapsed / totalProjectDays) * 100), 100);
+          }
+
+        // --- C. LOGIK KESIHATAN PROJEK (VERSI: FOKUS TARIKH AKHIR) ---
+        // Logik: Selagi belum tamat tempoh kontrak, projek dianggap "Sedang Berjalan".
+        // Hanya trigger "Merah" jika hari ini melepasi tarikh siap (Overrun).
         
-        const sdlc = p.sdlc || {}; 
-        
-        const urs = { target: sdlc["TARIKH URS ASAL"], actual: sdlc["TARIKH URS SEBENAR"] };
-        const uatBaru = sdlc["TARIK UAT BARU"];
-        const uat = { target: uatBaru || sdlc["TARIKH UAT ASAL"], actual: sdlc["TARIKH UAT SEBENAR"], isRevised: !!uatBaru };
-        const uatExtras = [];
-        if (sdlc["TARIKH LATIHAN"]) uatExtras.push({ label: 'LATIH', date: sdlc["TARIKH LATIHAN"] });
-
-        const liveBaru = sdlc["TARIKH GO LIVE BARU"];
-        const live = { target: liveBaru || sdlc["TARIKH GO LIVE ASAL"], actual: sdlc["TARIKH GO LIVE SEBENAR"], isRevised: !!liveBaru };
-        const liveExtras = [];
-        if (sdlc["TARIKH FA"]) liveExtras.push({ label: 'FA', date: sdlc["TARIKH FA"] });
-
-        // Logic Progress Canggih
-        let timeScore = 0;
-        const dStart = parseDate(tMula);
-        const dEnd = parseDate(tEOT || tSiapAsal); 
-        const today = new Date();
-
-        if (dStart && dEnd) {
-            const totalDuration = dEnd.getTime() - dStart.getTime();
-            const elapsed = today.getTime() - dStart.getTime();
-            if (elapsed <= 0) timeScore = 0;
-            else if (elapsed >= totalDuration) timeScore = 100;
-            else timeScore = Math.round((elapsed / totalDuration) * 100);
-        }
-
-        let physScore = 0; 
-        if (urs.actual) physScore = 30; 
-        if (uat.actual) physScore = 80;
-        if (live.actual) physScore = 100;
-        
-        const manualProgress = p.PROGRESS_MASA ? parseFloat(p.PROGRESS_MASA) : 0;
-        if (manualProgress > physScore) physScore = manualProgress;
-        if (p["TARIKH SELESAI"]) { physScore = 100; timeScore = 100; }
-
-        let statusPrestasi = "Ikut Jadual";
-        let statusColor = "text-blue-600";
-        if (physScore < timeScore - 10) { statusPrestasi = "Lewat Jadual"; statusColor = "text-red-600"; }
-        else if (physScore > timeScore + 5) { statusPrestasi = "Mendahului Jadual"; statusColor = "text-emerald-600"; }
-
-        // --- 4. LOGIK KEWANGAN PINTAR (SMART MILESTONE BILLING) ---
         const finScore = p.PROGRESS_MASA ? parseFloat(p.PROGRESS_MASA) : 0;
-        const totalKos = parseVal(kosAkhir); 
-        const paidValue = (finScore / 100) * totalKos;
         
-        // A. Tentukan Pemberat Pembayaran (Boleh disesuaikan ikut polisi BPM)
-        // Standard: URS (20%), UAT/Pembangunan (60%), Go Live/FA (20%)
-        let allowablePayment = 0;
-        let nextMilestone = "Permulaan";
+        let healthStatus = "SEDANG BERJALAN"; // Default status neutral (Biru)
+        let healthColor = "bg-indigo-500"; 
+        let statusBadge = null;
+
+        // --- MULA PENILAIAN ---
         
-        // Semak Milestone Mana Dah "Secure"
-        if (urs.actual) {
-            allowablePayment = 30; // Dah siap URS, layak 30%
-            nextMilestone = "UAT";
-        }
-        if (uat.actual) {
-            allowablePayment = 90; // Dah siap UAT, layak naik ke 90%
-            nextMilestone = "Go Live";
-        }
-        if (live.actual || p["TARIKH SELESAI"]) {
-            allowablePayment = 100; // Dah siap semua
-            nextMilestone = "Selesai";
-        }
-
-        // B. Analisis Status Kewangan
-        let financeStatus = "Terkawal";
-        let financeColor = "text-emerald-600 bg-emerald-50 border-emerald-100"; // Hijau (Selamat)
-        let barColor = "bg-amber-400"; // Kuning (Normal)
-        let showWarning = false;
-
-        // Situasi 1: Terlebih Bayar (BAHAYA!)
-        // Contoh: Kerja baru siap URS (Layak 20%), tapi dah bayar 50%.
-        if (finScore > allowablePayment) {
-            const diff = (finScore - allowablePayment).toFixed(0);
-            financeStatus = `TERLEBIH ${diff}%`;
-            financeColor = "text-red-600 bg-red-50 border-red-100 animate-pulse font-black";
-            barColor = "bg-red-500"; // Bar jadi Merah
-            showWarning = true;
+        // 1. JIKA PROJEK DAH SIAP
+        if (dActualFinish) {
+            if (isOverrun) {
+                healthStatus = "SIAP LEWAT";
+                healthColor = "bg-amber-500"; // Kuning
+            } else {
+                healthStatus = "SIAP CEMERLANG";
+                healthColor = "bg-emerald-500"; // Hijau
+            }
         } 
-        // Situasi 2: Kurang Bayar / Belum Tuntut (SELAMAT)
-        // Contoh: Layak 80%, tapi baru bayar 50%.
-        else if (finScore < allowablePayment) {
-            const bakiLayak = (allowablePayment - finScore).toFixed(0);
-            financeStatus = `Baki Layak: ${bakiLayak}%`; // Memberitahu kontraktor boleh claim lagi
-            financeColor = "text-blue-600 bg-blue-50 border-blue-100";
+        // 2. JIKA PROJEK BELUM SIAP
+        else {
+            if (isOverrun) {
+                // KES 1: DAH LEBIH MASA (Barulah kita merahkan dia)
+                healthStatus = "LEWAT (OVERRUN)";
+                healthColor = "bg-red-600 animate-pulse";
+                statusBadge = <span className="text-[9px] font-black text-white bg-red-600 px-2 py-0.5 rounded shadow-sm animate-pulse">KRITIKAL: TAMAT TEMPOH</span>;
+            } 
+            else {
+                // KES 2: MASIH DALAM TEMPOH (Walaupun progress rendah, kita anggap sedang buat kerja)
+                healthStatus = "DALAM JADUAL";
+                healthColor = "bg-indigo-500"; // Kekal Biru (Tenang)
+                
+                // Pilihan Tambahan: Amaran Lembut jika masa dah tinggal sikit (Contoh: > 90% masa dah jalan)
+                // Ini cuma peringatan mesra, bukan label "Sakit"
+                if (solidBarWidth > 90) {
+                     statusBadge = <span className="text-[9px] font-black text-white bg-amber-500 px-2 py-0.5 rounded shadow-sm">HAMPIR TAMAT</span>;
+                }
+            }
         }
-        
-        // 5. LOGIK VARIANCE TARIKH (LATE/EARLY)
-        let diffLabel = ""; let diffColor = ""; let diffBg = "";
-        const dateContractEnd = parseDate(tEOT || tSiapAsal);
-        const dateActualEnd = parseDate(p["TARIKH SELESAI"] || (type === 'completed' ? p["TARIKH SIAP SEMASA_ISO"] : null)); 
-        if (dateContractEnd && dateActualEnd) {
-             const dayDiff = calcDayDiff(dateContractEnd, dateActualEnd);
-             if (dayDiff > 0) { diffLabel = `Lewat ${dayDiff} Hari`; diffColor = "text-red-600"; diffBg = "bg-red-50 border-red-100"; }
-             else if (dayDiff < 0) { diffLabel = `Awal ${Math.abs(dayDiff)} Hari`; diffColor = "text-emerald-600"; diffBg = "bg-emerald-50 border-emerald-100"; }
-             else { diffLabel = "Tepat Masa"; diffColor = "text-blue-600"; diffBg = "bg-blue-50 border-blue-100"; }
-        }
 
-        return (
-            <div className="bg-white rounded-xl shadow-sm border border-slate-200 hover:shadow-lg hover:border-indigo-300 transition-all duration-300 relative overflow-hidden group mb-4">
-                <div className={`absolute top-0 left-0 w-1.5 h-full ${type === 'completed' ? 'bg-emerald-500' : 'bg-indigo-500'}`}></div>
-                <div className="p-3 pl-5 flex flex-col gap-3">
-                    {/* A. HEADER (GEMPAK & PROFESIONAL) */}
-                    <div className="border-b border-slate-100 pb-3 mb-1">
-                        
-                        {/* Baris Atas: No Rujukan & Tag EOT */}
-                        <div className="flex justify-between items-center mb-2">
-                            
-                            {/* No Sebut Harga (Badge Ala Tech) */}
-                            <div className="flex items-center gap-1 bg-slate-50 px-2 py-1 rounded-md border border-slate-200 group-hover:bg-white group-hover:border-indigo-200 transition-colors shadow-sm">
-                                <span className="text-slate-400">
-                                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 20l4-16m2 16l4-16M6 9h14M4 15h14"></path></svg>
-                                </span>
-                                <span className="text-[10px] font-black text-slate-600 uppercase tracking-widest font-mono">
-                                    {p["NO SEBUT HARGA"] || "DRAF"}
-                                </span>
-                            </div>
+          // --- D. DATA MARKER ---
+          const dTargetURS = parseDateObj(urs.target);
+          const dTargetUAT = parseDateObj(uat.target);
+          const dActualURS = parseDateObj(urs.actual);
+          const dActualUAT = parseDateObj(uat.actual);
 
-                            {/* EOT Alert (Pill Shape) */}
-                            {tEOT && (
-                                <div className="flex items-center gap-1 pl-1 pr-2 py-0.5 bg-amber-50 border border-amber-100 rounded-full shadow-sm animate-pulse">
-                                    <div className="bg-amber-500 rounded-full p-0.5 text-white">
-                                        <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
-                                    </div>
-                                    <span className="text-[8px] font-black text-amber-700 uppercase tracking-wider">EOT Aktif</span>
-                                </div>
-                            )}
-                        </div>
+          const getPhaseInfo = (actualDate, targetDate, label, targetType) => {
+              const targetPos = getPercent(targetDate);
+              const targetDateStr = formatDate(targetDate);
+              const labelTarget = `SASARAN ${label} ${targetType}`;
+              let marker = null;
+              if (actualDate) {
+                  const actualPos = getPercent(actualDate);
+                  const isLate = actualDate.getTime() > targetDate.getTime();
+                  const colorClass = isLate ? "bg-red-500 shadow-[0_0_6px_rgba(239,68,68,1)]" : "bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,1)]";
+                  marker = { pos: actualPos, color: colorClass, isLate, dateStr: formatDate(actualDate) };
+              }
+              return { label, labelTarget, targetPos, targetDateStr, marker };
+          };
 
-                        {/* Baris Bawah: Tajuk Projek Besar */}
-                        <div className="flex items-start gap-3 mt-1">
-                            {/* Ikon Projek (Decorative) */}
-                            <div className="mt-0.5 shrink-0 w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-50 to-slate-50 border border-indigo-100 flex items-center justify-center text-indigo-600 shadow-sm group-hover:scale-110 transition-transform duration-300">
-                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path></svg>
-                            </div>
+          const infoURS = getPhaseInfo(dActualURS, dTargetURS, "URS", cfgURS.type);
+          const infoUAT = getPhaseInfo(dActualUAT, dTargetUAT, "UAT", cfgUAT.type);
 
-                            {/* Tajuk Teks */}
-                            <h4 className="text-[13px] font-black text-slate-800 leading-snug group-hover:text-indigo-700 transition-colors line-clamp-3 pt-0.5">
-                                {p.NAMA_PAPARAN}
-                            </h4>
-                        </div>
+          let displayPercent = Math.round(solidBarWidth);
+          if (displayPercent > 100) displayPercent = 100;
 
-                    </div>
+          // --- 4. KEWANGAN ---
+          const totalKos = parseVal(kosAkhir); 
+          const paidValue = (finScore / 100) * totalKos;
+          let allowablePayment = 0;
+          if (urs.actual) allowablePayment = 30; 
+          if (uat.actual) allowablePayment = 90; 
+          if (live.actual || p["TARIKH SELESAI"]) allowablePayment = 100;
 
-                    {/* --- NEW: VITAL MONITOR HEALTH INDICATOR (VERSI JANTUNG HIDUP - CLEAN) --- */}
-                    <div className="mb-3 px-1">
-                        {(() => {
-                            const variance = physScore - timeScore;
-                            
-                            // Default: Projek Sihat (Hijau)
-                            let healthStatus = "PROJEK SIHAT";
-                            let containerClass = "bg-gradient-to-r from-emerald-50 to-white border-emerald-200";
-                            let textClass = "text-emerald-700";
-                            let heartClass = "text-emerald-500 animate-heartbeat"; // Guna class dari Styles.html
-                            let subText = "Prestasi Cemerlang";
-                            let glowColor = "shadow-emerald-100";
+          // Logic Bar Kewangan
+          let financeStatus = "Terkawal";
+          let financeColor = "text-emerald-600 bg-emerald-50 border-emerald-100";
+          let barFinanceColor = "bg-amber-400"; 
+          
+          if (finScore > allowablePayment) {
+              financeStatus = `TERLEBIH BAYAR`;
+              financeColor = "text-red-600 bg-red-50 border-red-100 font-bold";
+              barFinanceColor = "bg-red-500"; 
+          } 
 
-                            // Logic Penentuan Status & Warna
-                            if (physScore === 100) {
-                                // Siap (Biru)
-                                healthStatus = "SIAP SEPENUHNYA";
-                                containerClass = "bg-gradient-to-r from-blue-50 to-white border-blue-200";
-                                textClass = "text-blue-700";
-                                heartClass = "text-blue-500"; // Tiada animasi (Rehat)
-                                subText = "Tahniah! Misi Selesai.";
-                            } else if (variance < -15) {
-                                // Sakit Teruk (Merah)
-                                healthStatus = "KRITIKAL (SAKIT)";
-                                containerClass = "bg-gradient-to-r from-red-50 to-white border-red-300 shadow-lg shadow-red-100";
-                                textClass = "text-red-700";
-                                heartClass = "text-red-600 animate-heartbeat-fast"; // Guna class laju dari Styles.html
-                                subText = `Lewat Teruk (${Math.abs(variance)}%)! Perlukan Tindakan.`;
-                            } else if (variance < 0) {
-                                // Demam (Kuning/Amber)
-                                healthStatus = "DEMAM (LEWAT)";
-                                containerClass = "bg-gradient-to-r from-amber-50 to-white border-amber-200";
-                                textClass = "text-amber-700";
-                                heartClass = "text-amber-500 animate-heartbeat";
-                                subText = `Tergelincir sikit (-${Math.abs(variance)}%)`;
-                            }
+          // --- 5. EOT & VARIANCE LABEL ---
+          let diffLabel = ""; let diffColor = ""; let diffBg = "";
+          const dateActualEnd = parseDateObj(p["TARIKH SELESAI"] || (type === 'completed' ? p["TARIKH SIAP SEMASA_ISO"] : null)); 
+          if (dContractEnd && dateActualEnd) {
+              const dayDiff = Math.ceil((dateActualEnd.getTime() - dContractEnd.getTime()) / (1000 * 60 * 60 * 24));
+              if (dayDiff > 0) { diffLabel = `Lewat ${dayDiff} Hari`; diffColor = "text-red-600"; diffBg = "bg-red-50 border-red-100"; }
+              else if (dayDiff < 0) { diffLabel = `Awal ${Math.abs(dayDiff)} Hari`; diffColor = "text-emerald-600"; diffBg = "bg-emerald-50 border-emerald-100"; }
+              else { diffLabel = "Tepat Masa"; diffColor = "text-blue-600"; diffBg = "bg-blue-50 border-blue-100"; }
+          }
 
-                            return (
-                                <div className={`relative overflow-hidden rounded-xl border-2 px-3 py-2.5 shadow-sm transition-all duration-300 group ${containerClass} ${glowColor}`}>
-                                    
-                                    {/* BACKGROUND: EKG Waveform (Hiasan Belakang) */}
-                                    <div className="absolute inset-0 opacity-10 pointer-events-none flex items-center">
-                                        <svg className="w-full h-12 text-slate-900" viewBox="0 0 300 50" preserveAspectRatio="none">
-                                            <path d="M0,25 L30,25 L40,10 L50,40 L60,25 L100,25 L110,5 L120,45 L130,25 L300,25" fill="none" stroke="currentColor" strokeWidth="2"/>
-                                        </svg>
-                                    </div>
+          // Components Helper (Marker etc) - Same as before
+          const RenderTargetLine = ({ info }) => {
+              if (!info || info.targetPos <= 0) return null;
+              return (
+                  <div className="group/target absolute top-0 bottom-0 w-1 bg-slate-400/80 z-20 hover:w-1.5 hover:bg-slate-600 transition-all cursor-help border-l border-white/40 pointer-events-auto" style={{ left: `${info.targetPos}%` }}>
+                      <div className="hidden group-hover/target:block absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-max px-2.5 py-1.5 bg-slate-700 text-white text-[10px] rounded-md shadow-xl z-50 text-center font-bold tracking-wide border border-slate-500">
+                          {info.labelTarget}<div className="font-mono text-amber-300 mt-0.5 text-[11px]">{info.targetDateStr}</div>
+                          <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-slate-700"></div>
+                      </div>
+                  </div>
+              );
+          };
 
-                                    <div className="relative z-10 flex items-center justify-between">
-                                        
-                                        {/* KIRI: Jantung Besar & Status */}
-                                        <div className="flex items-center gap-3">
-                                            {/* Container Jantung */}
-                                            <div className="relative w-10 h-10 flex items-center justify-center bg-white rounded-full shadow-md border border-slate-100">
-                                                {/* Jantung Icon */}
-                                                <svg className={`w-6 h-6 ${heartClass} drop-shadow-md`} fill="currentColor" viewBox="0 0 24 24">
-                                                    <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/>
-                                                </svg>
-                                                
-                                                {/* Sparkle Icon untuk Projek Siap (Hanya muncul jika 100%) */}
-                                                {physScore === 100 && (
-                                                    <div className="absolute -top-1 -right-1 text-yellow-400 animate-spin-slow">
-                                                        <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z"/></svg>
-                                                    </div>
-                                                )}
-                                            </div>
+          const RenderActualMarker = ({ info }) => {
+              if (!info || !info.marker) return null;
+              const m = info.marker;
+              return (
+                  <div className={`group/marker absolute top-0 bottom-0 w-1.5 z-30 border-x border-white cursor-help ${m.color} transition-all hover:w-2 hover:scale-110 pointer-events-auto`} style={{ left: `${m.pos}%` }}>
+                      <div className="hidden group-hover/marker:block absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-max px-2.5 py-1.5 bg-slate-900 text-white text-[10px] rounded-md shadow-xl z-50 text-center border border-slate-600">
+                          <div className="font-black text-amber-400 border-b border-white/20 pb-1 mb-1">{info.label} SEBENAR</div>
+                          <div className="font-mono text-[11px] mb-0.5">{m.dateStr}</div>
+                          <div className={m.isLate ? "text-red-400 font-bold uppercase tracking-wider" : "text-emerald-400 font-bold uppercase tracking-wider"}>{m.isLate ? "TERLEWAT" : "MENDAHULUI"}</div>
+                          <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-slate-900"></div>
+                      </div>
+                  </div>
+              );
+          };
 
-                                            {/* Teks Status & Subtext */}
-                                            <div className="flex flex-col">
-                                                <span className={`text-[11px] font-black uppercase tracking-widest leading-none ${textClass}`}>
-                                                    {healthStatus}
-                                                </span>
-                                                <span className="text-[9px] font-bold text-slate-400 mt-1">
-                                                    {subText}
-                                                </span>
-                                            </div>
-                                        </div>
+          const OriginalContractMarker = () => {
+              if (!isOverrun || !dContractEnd) return null;
+              const contractPos = getPercent(dContractEnd);
+              return (
+                  <div className="group/contract absolute top-0 bottom-0 w-4 -ml-2 z-20 cursor-help flex justify-center pointer-events-auto" style={{ left: `${contractPos}%` }}>
+                      <div className="h-full border-l-2 border-dashed border-slate-400/60 group-hover/contract:border-slate-600 group-hover/contract:border-solid transition-all duration-300"></div>
+                      <div className="hidden group-hover/contract:block absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-max px-3 py-2 bg-slate-800 text-white text-[10px] rounded-md shadow-xl z-50 text-center border border-slate-600 animate-fade-in-up">
+                          <div className="font-black text-amber-400 border-b border-white/20 pb-1 mb-1 tracking-wider uppercase">TAMAT KONTRAK ASAL</div>
+                          <div className="font-mono text-[11px] font-bold text-white mb-0.5">{formatDate(dContractEnd)}</div>
+                          <div className="text-[9px] text-slate-400 italic leading-tight">Projek sepatutnya<br/>siap di sini</div>
+                          <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-slate-800"></div>
+                      </div>
+                  </div>
+              );
+          };
 
-                                        {/* KANAN: Peratus Besar */}
-                                        <div className="flex flex-col items-end">
-                                            <div className={`text-3xl font-black leading-none tracking-tighter ${textClass} drop-shadow-sm`}>
-                                                {physScore}<span className="text-xs align-top ml-0.5 opacity-60">%</span>
-                                            </div>
-                                            <span className="text-[7px] uppercase font-bold text-slate-400 tracking-wider">Progress</span>
-                                        </div>
+          return (
+              <div onClick={onClick} className={`bg-white rounded-xl shadow-sm border border-slate-200 hover:shadow-lg transition-all duration-300 relative group mb-4 cursor-pointer hover:border-indigo-300`}>
+                  
+                  {/* 1. HEALTH STRIP (LEFT) - Warna ikut kesihatan projek */}
+                  <div className={`absolute top-0 left-0 w-1.5 h-full rounded-l-xl ${healthColor.split(' ')[0]}`}></div>
+                  
+                  <div className="p-3 pl-5 flex flex-col gap-3">
+                      {/* HEADER */}
+                      <div className="border-b border-slate-100 pb-3 mb-1">
+                          <div className="flex justify-between items-center mb-2">
+                              <div className="flex items-center gap-2">
+                                  <div className="flex items-center gap-1 bg-slate-50 px-2 py-1 rounded-md border border-slate-200 group-hover:bg-white group-hover:border-indigo-200 transition-colors shadow-sm">
+                                      <span className="text-slate-400"><svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 20l4-16m2 16l4-16M6 9h14M4 15h14"></path></svg></span>
+                                      <span className="text-[10px] font-black text-slate-600 uppercase tracking-widest font-mono">{p["NO SEBUT HARGA"] || "DRAF"}</span>
+                                  </div>
+                                  {/* 2. BADGE HEALTH STATUS DI SINI */}
+                                  {statusBadge}
+                              </div>
+                              
+                              {tEOT && (<div className="flex items-center gap-1 pl-1 pr-2 py-0.5 bg-amber-50 border border-amber-100 rounded-full shadow-sm animate-pulse"><div className="bg-amber-500 rounded-full p-0.5 text-white"><svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg></div><span className="text-[8px] font-black text-amber-700 uppercase tracking-wider">EOT Aktif</span></div>)}
+                          </div>
+                          <div className="flex items-start gap-3 mt-1">
+                              <div className="mt-0.5 shrink-0 w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-50 to-slate-50 border border-indigo-100 flex items-center justify-center text-indigo-600 shadow-sm group-hover:scale-110 transition-transform duration-300">
+                                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path></svg>
+                              </div>
+                              <h4 className="text-[13px] font-black text-slate-800 leading-snug group-hover:text-indigo-700 transition-colors line-clamp-3 pt-0.5">{p.NAMA_PAPARAN}</h4>
+                          </div>
+                      </div>
 
-                                    </div>
-                                </div>
-                            );
-                        })()}
-                    </div>
+                      {/* VITAL MONITOR (Progress Bar Visual Besar) */}
+                      {type !== 'planning' && (
+                      <div className="mb-3 px-1">
+                          {(() => {
+                              let heartClass = "text-emerald-500 animate-heartbeat";
+                              let containerClass = "from-emerald-50 to-white border-emerald-200";
+                              
+                              // Warna Monitor Jantung ikut status sakit
+                              if (healthStatus.includes("SAKIT") || healthStatus.includes("KRITIKAL")) { 
+                                  heartClass = "text-red-600 animate-heartbeat-fast"; 
+                                  containerClass = "from-red-50 to-white border-red-300 shadow-red-100"; 
+                              } else if (healthStatus.includes("BERISIKO")) {
+                                  heartClass = "text-amber-500 animate-heartbeat"; 
+                                  containerClass = "from-amber-50 to-white border-amber-200";
+                              }
 
-                    {/* B. INFO GRID (SAIZ KEMAS: 12px & 9px) */}
-                    <div className="bg-slate-50 rounded-lg p-2.5 border border-slate-200 shadow-sm">
-                        <div className="grid grid-cols-2 gap-3">
-                            
-                            {/* 1. Tarikh Mula */}
-                            <div className="flex flex-col">
-                                <span className="flex items-center gap-1 text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">
-                                    <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
-                                    Mula
-                                </span>
-                                <span className="text-xs font-black text-slate-700 font-mono leading-none">
-                                    {tMula}
-                                </span>
-                            </div>
+                              return (
+                                  <div className={`relative overflow-hidden rounded-xl border-2 px-3 py-2.5 shadow-sm transition-all duration-300 group bg-gradient-to-r ${containerClass}`}>
+                                      <div className="absolute inset-0 opacity-10 pointer-events-none flex items-center"><svg className="w-full h-12 text-slate-900" viewBox="0 0 300 50" preserveAspectRatio="none"><path d="M0,25 L30,25 L40,10 L50,40 L60,25 L100,25 L110,5 L120,45 L130,25 L300,25" fill="none" stroke="currentColor" strokeWidth="2"/></svg></div>
+                                      <div className="relative z-10 flex items-center justify-between">
+                                          <div className="flex items-center gap-3">
+                                              <div className="relative w-10 h-10 flex items-center justify-center bg-white rounded-full shadow-md border border-slate-100">
+                                                  <svg className={`w-6 h-6 ${heartClass} drop-shadow-md`} fill="currentColor" viewBox="0 0 24 24"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>
+                                              </div>
+                                              <div className="flex flex-col">
+                                                  <span className={`text-[11px] font-black uppercase tracking-widest leading-none ${healthStatus.includes("SAKIT") ? "text-red-700" : "text-emerald-700"}`}>{healthStatus}</span>
+                                                  <span className="text-[9px] font-bold text-slate-400 mt-1">Status Kesihatan</span>
+                                              </div>
+                                          </div>
+                                          <div className="flex flex-col items-end">
+                                              <div className={`text-3xl font-black leading-none tracking-tighter drop-shadow-sm ${healthStatus.includes("SAKIT") ? "text-red-700" : "text-emerald-700"}`}>{displayPercent}<span className="text-xs align-top ml-0.5 opacity-60">%</span></div>
+                                              <span className="text-[7px] uppercase font-bold text-slate-400 tracking-wider">Masa Berjalan</span>
+                                          </div>
+                                      </div>
+                                  </div>
+                              );
+                          })()}
+                      </div>
+                      )}
 
-                            {/* 2. Tarikh Siap Asal */}
-                            <div className="flex flex-col items-end text-right">
-                                <span className="flex items-center gap-1 text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">
-                                    Siap Asal
-                                    <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
-                                </span>
-                                <span className={`text-xs font-black font-mono leading-none ${tEOT ? 'text-slate-400 line-through decoration-slate-300' : 'text-slate-700'}`}>
-                                    {tSiapAsal}
-                                </span>
-                            </div>
+                      {/* INFO GRID */}
+                      <div className="bg-slate-50 rounded-lg p-2.5 border border-slate-200 shadow-sm">
+                          <div className="grid grid-cols-2 gap-3">
+                              <div className="flex flex-col"><span className="flex items-center gap-1 text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-0.5"><svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>Mula</span><span className="text-xs font-black text-slate-700 font-mono leading-none">{tMula}</span></div>
+                              <div className="flex flex-col items-end text-right"><span className="flex items-center gap-1 text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">Siap Asal<svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg></span><span className={`text-xs font-black font-mono leading-none ${tEOT ? 'text-slate-400 line-through decoration-slate-300' : 'text-slate-700'}`}>{tSiapAsal}</span></div>
+                              {tEOT && (<div className="col-span-2 bg-amber-50 border border-amber-200 rounded px-2 py-1 flex justify-between items-center -my-0.5"><div className="flex items-center gap-1"><svg className="w-3 h-3 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg><span className="text-[9px] font-black uppercase text-amber-600 tracking-wider">EOT Diluluskan</span></div><span className="text-[10px] font-black text-amber-700 font-mono bg-white px-1 rounded shadow-sm border border-amber-100">{tEOT}</span></div>)}
+                              <div className="col-span-2 border-t border-slate-200"></div>
+                              <div className="flex flex-col"><span className="flex items-center gap-1 text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-0.5"><svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>Siap Sebenar</span><span className="text-xs font-black text-slate-800 font-mono leading-none">{p["TARIKH SELESAI"] || "-"}</span></div>
+                              <div className="flex flex-col items-end justify-center">{diffLabel ? <span className={`text-[9px] font-black px-1.5 py-0.5 rounded border shadow-sm ${diffBg} ${diffColor}`}>{diffLabel}</span> : <span className="text-[9px] font-bold text-slate-400 italic bg-slate-100 px-1.5 py-0.5 rounded">Sedang Berjalan</span>}</div>
+                          </div>
+                      </div>
 
-                            {/* 3. EOT (Lanjutan Masa) - Compact */}
-                            {tEOT && (
-                                <div className="col-span-2 bg-amber-50 border border-amber-200 rounded px-2 py-1 flex justify-between items-center -my-0.5">
-                                    <div className="flex items-center gap-1">
-                                        <svg className="w-3 h-3 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
-                                        <span className="text-[9px] font-black uppercase text-amber-600 tracking-wider">EOT Diluluskan</span>
-                                    </div>
-                                    <span className="text-[10px] font-black text-amber-700 font-mono bg-white px-1 rounded shadow-sm border border-amber-100">
-                                        {tEOT}
-                                    </span>
-                                </div>
-                            )}
-                            
-                            {/* Garisan Pemisah */}
-                            <div className="col-span-2 border-t border-slate-200"></div>
+                      {/* TIMELINE */}
+                      <div className="relative py-2 mt-2 mb-5">
+                          <div className="absolute top-[15px] left-[16%] right-[16%] h-1 bg-slate-200 -z-0 rounded-full"></div>
+                          <div className="grid grid-cols-3 w-full relative">
+                              <TimelineStep label="URS" targetDate={urs.target} actualDate={urs.actual} position="items-center" />
+                              <TimelineStep label="UAT" targetDate={uat.target} actualDate={uat.actual} isRevised={uat.isRevised} extraInfo={uatExtras} position="items-center" />
+                              <TimelineStep label="GO LIVE" targetDate={live.target} actualDate={live.actual} isRevised={live.isRevised} extraInfo={liveExtras} position="items-center" />
+                          </div>
+                      </div>
 
-                            {/* 4. Siap Sebenar */}
-                            <div className="flex flex-col">
-                                <span className="flex items-center gap-1 text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">
-                                    <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
-                                    Siap Sebenar
-                                </span>
-                                <span className="text-xs font-black text-slate-800 font-mono leading-none">
-                                    {p["TARIKH SELESAI"] || "-"}
-                                </span>
-                            </div>
+                      {/* --- PROGRESS BARS --- */}
+                      <div className="space-y-4 mt-2 mb-2">
+                          <div className="flex flex-col gap-1.5">
+                              <div className="flex justify-between items-end">
+                                  <div className="flex items-center gap-2">
+                                      <span className="text-xs font-black text-slate-700 uppercase tracking-wider">Kemajuan Fizikal</span>
+                                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded bg-slate-100 border border-slate-200 ${healthStatus.includes("SAKIT") ? "text-red-600" : "text-indigo-600"}`}>{healthStatus}</span>
+                                  </div>
+                                  <div className="text-right"><span className="text-sm font-black text-blue-700">{displayPercent}%</span><span className="text-[10px] text-slate-500 ml-1 font-mono font-bold">(Masa)</span></div>
+                              </div>
 
-                            {/* 5. Status Variance (Badge Kecil) */}
-                            <div className="flex flex-col items-end justify-center">
-                                {diffLabel ? (
-                                    <span className={`text-[9px] font-black px-1.5 py-0.5 rounded border shadow-sm ${diffBg} ${diffColor}`}>
-                                        {diffLabel}
-                                    </span>
-                                ) : (
-                                    <span className="text-[9px] font-bold text-slate-400 italic bg-slate-100 px-1.5 py-0.5 rounded">
-                                        Sedang Berjalan
-                                    </span>
-                                )}
-                            </div>
+                              <div className="relative w-full h-4">
+                                  <div className="absolute inset-0 w-full h-full bg-slate-100 rounded-full overflow-hidden border border-slate-200 shadow-inner">
+                                      {/* 3. GHOST BAR (Bertukar Merah jika SAKIT) */}
+                                      <div className={`absolute top-0 left-0 h-full w-full border-r transition-colors duration-500 ${isOverrun || healthStatus.includes("SAKIT") ? "bg-red-100/50 border-red-200" : "bg-blue-100/50 border-blue-200"}`}></div>
+                                      
+                                      {/* Solid Bar (Masa) - Warna ikut Kesihatan */}
+                                      <div className={`absolute top-0 left-0 h-full rounded-full shadow-sm transition-all duration-1000 ${healthColor}`} style={{ width: `${solidBarWidth}%` }}>
+                                          <div className="absolute top-0 left-0 w-full h-full bg-gradient-to-b from-white/20 to-transparent"></div>
+                                      </div>
+                                  </div>
 
-                        </div>
-                    </div>
+                                  <div className="absolute inset-0 w-full h-full pointer-events-none">
+                                      <OriginalContractMarker />
+                                      <RenderTargetLine info={infoURS} />
+                                      <RenderTargetLine info={infoUAT} />
+                                      <RenderActualMarker info={infoURS} />
+                                      <RenderActualMarker info={infoUAT} />
+                                  </div>
+                              </div>
+                          </div>
 
-                    <div className="relative py-2 mt-2 mb-5">
-                        <div className="absolute top-[15px] left-[16%] right-[16%] h-1 bg-slate-200 -z-0 rounded-full"></div>
-                        <div className="grid grid-cols-3 w-full relative">
-                            <TimelineStep label="URS" targetDate={urs.target} actualDate={urs.actual} position="items-start pl-2" />
-                            <TimelineStep label="UAT" targetDate={uat.target} actualDate={uat.actual} isRevised={uat.isRevised} extraInfo={uatExtras} position="items-center" />
-                            <TimelineStep label="GO LIVE" targetDate={live.target} actualDate={live.actual} isRevised={live.isRevised} extraInfo={liveExtras} position="items-end pr-2" />
-                        </div>
-                    </div>
+                          {/* Bar Kewangan */}
+                          <div className="flex flex-col gap-1.5 opacity-90 hover:opacity-100 transition-opacity">
+                              <div className="flex justify-between items-end">
+                                  <div className="flex items-center gap-2">
+                                      <span className="text-xs font-black text-amber-600 uppercase tracking-wider">Bayaran</span>
+                                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${financeColor}`}>{financeStatus}</span>
+                                  </div>
+                                  <div className="text-right">
+                                      <span className="text-sm font-black text-amber-700">{finScore}%</span>
+                                      <span className="text-[10px] text-slate-500 ml-1 font-mono font-bold">({fmtRM(paidValue)})</span>
+                                  </div>
+                              </div>
+                              <div className="relative w-full h-4 bg-slate-100 rounded-full overflow-hidden border border-slate-200 shadow-inner">
+                                  <div className={`absolute top-0 left-0 h-full rounded-full transition-all duration-1000 shadow-sm ${barFinanceColor}`} style={{ width: `${finScore}%` }}>
+                                      <div className="w-full h-full opacity-20" style={{ backgroundImage: 'linear-gradient(45deg,rgba(255,255,255,.15) 25%,transparent 25%,transparent 50%,rgba(255,255,255,.15) 50%,rgba(255,255,255,.15) 75%,transparent 75%,transparent)', backgroundSize: '1rem 1rem' }}></div>
+                                  </div>
+                                  <div className="absolute top-0 bottom-0 w-0.5 bg-emerald-500 z-10" style={{ left: `${allowablePayment}%` }}></div>
+                              </div>
+                              <div className="flex justify-between text-[9px] text-slate-400 italic px-1">
+                                  <span>* Had bayaran ikut milestone siap</span>
+                              </div>
+                          </div>
+                      </div>
 
-                    <div className="space-y-4 mt-2 mb-2">
+                      {/* FOOTER */}
+                      <div className="mt-3 pt-1">
+                          <div className="bg-gradient-to-r from-slate-50 to-white border border-slate-200 rounded-lg p-2.5 shadow-sm flex items-center justify-between hover:border-indigo-300 transition-colors duration-300 group/footer">
+                              <div className="flex flex-col gap-1">
+                                  <span className="flex items-center gap-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+                                      <svg className="w-3.5 h-3.5 text-slate-400 group-hover/footer:text-indigo-500 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z"></path></svg>Nilai & Pelaksana
+                                  </span>
+                                  <div className="flex items-center gap-1.5 pl-5">
+                                      <svg className="w-3 h-3 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"></path></svg>
+                                      <span className="text-[10px] font-bold text-slate-600 uppercase truncate max-w-[150px] md:max-w-[200px]" title={p["SYARIKAT"]}>{p["SYARIKAT"] || "Tiada Maklumat Syarikat"}</span>
+                                  </div>
+                              </div>
+                              <div className="text-right">
+                                  <div className="text-lg font-black text-slate-800 leading-none tracking-tight group-hover/footer:text-indigo-700 transition-colors">{fmtRM(kosAkhir)}</div>
+                                  {voTambah > 0 ? (<span className="text-[9px] font-bold text-emerald-600 bg-emerald-50 px-1 rounded border border-emerald-100 mt-1 inline-block">+VO: {fmtRM(voTambah)}</span>) : (<span className="text-[9px] text-slate-400 block mt-0.5">Tiada VO</span>)}
+                              </div>
+                          </div>
+                      </div>
 
-                         {/* 1. Bar Fizikal (Time vs Actual) */}
-                         <div className="flex flex-col gap-1.5">
-                                <div className="flex justify-between items-end">
-                                    <div className="flex items-center gap-2">
-                                        <span className="text-xs font-black text-slate-700 uppercase tracking-wider">Kemajuan Fizikal</span>
-                                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded bg-slate-100 border border-slate-200 ${statusColor}`}>{statusPrestasi}</span>
-                                    </div>
-                                    <div className="text-right">
-                                    <span className="text-sm font-black text-blue-700">{physScore}%</span>
-                                    <span className="text-[10px] text-slate-500 ml-1 font-mono font-bold">(Masa: {timeScore}%)</span>
-                                    </div>
-                                </div>
-                                <div className="relative w-full h-4 bg-slate-100 rounded-full overflow-hidden border border-slate-200 shadow-inner">
-                                    <div className="absolute top-0 left-0 h-full bg-blue-200/50 border-r border-blue-300/50 transition-all duration-1000" style={{ width: `${timeScore}%` }}></div>
-                                    <div className={`absolute top-0 left-0 h-full rounded-full shadow-sm transition-all duration-1000 ${physScore < timeScore ? 'bg-red-500' : 'bg-blue-600'}`} style={{ width: `${physScore}%` }}>
-                                        <div className="absolute top-0 left-0 w-full h-full bg-gradient-to-b from-white/20 to-transparent"></div>
-                                    </div>
-                                    <div className="absolute top-0 bottom-0 w-0.5 bg-slate-500 z-10 opacity-60" style={{ left: `${timeScore}%` }}></div>
-                                </div>
-                        </div>
-
-                        {/* 2. Bar Kewangan (Smart Milestone Billing) */}
-                        <div className="flex flex-col gap-1.5 opacity-90 hover:opacity-100 transition-opacity">
-                            <div className="flex justify-between items-end">
-                                <div className="flex items-center gap-2">
-                                    <span className="text-xs font-black text-amber-600 uppercase tracking-wider">Bayaran</span>
-                                    {/* Badge Status */}
-                                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${financeColor}`}>
-                                        {financeStatus}
-                                    </span>
-                                </div>
-                                <div className="text-right">
-                                    <span className="text-sm font-black text-amber-700">{finScore}%</span>
-                                    <span className="text-[10px] text-slate-500 ml-1 font-mono font-bold">({fmtRM(paidValue)})</span>
-                                </div>
-                            </div>
-
-                            {/* Container Bar */}
-                            <div className="relative w-full h-4 bg-slate-100 rounded-full overflow-hidden border border-slate-200 shadow-inner">
-                                
-                                {/* A. Bar Bayaran Sebenar (Kuning/Merah) */}
-                                <div className={`absolute top-0 left-0 h-full rounded-full transition-all duration-1000 shadow-sm ${barColor}`} style={{ width: `${finScore}%` }}>
-                                    <div className="w-full h-full opacity-20" style={{ backgroundImage: 'linear-gradient(45deg,rgba(255,255,255,.15) 25%,transparent 25%,transparent 50%,rgba(255,255,255,.15) 50%,rgba(255,255,255,.15) 75%,transparent 75%,transparent)', backgroundSize: '1rem 1rem' }}></div>
-                                </div>
-
-                                {/* B. Jarum "Max Layak Dibayar" (Berdasarkan Milestone) */}
-                                {/* Ini menunjukkan takat maksima yang BOLEH dibayar setakat ini */}
-                                <div 
-                                    className="absolute top-0 bottom-0 w-0.5 bg-emerald-500 z-10" 
-                                    style={{ left: `${allowablePayment}%` }}
-                                ></div>
-                                
-                                {/* Label Kecil pada Jarum (Supaya user faham itu apa) */}
-                                {allowablePayment > 0 && allowablePayment < 100 && (
-                                    <div 
-                                        className="absolute top-0 flex flex-col items-center"
-                                        style={{ left: `${allowablePayment}%`, transform: 'translateX(-50%)' }}
-                                    >
-                                        <div className="w-1.5 h-1.5 bg-emerald-600 rounded-full"></div>
-                                        {/* Tunjuk label hanya jika mouse hover group, atau sentiasa ada jika nak jelas */}
-                                        <div className="hidden group-hover:block absolute bottom-4 bg-emerald-600 text-white text-[9px] px-1.5 py-0.5 rounded font-bold whitespace-nowrap shadow-lg z-20">
-                                            Had Layak ({allowablePayment}%)
-                                        </div>
-                                    </div>
-                                )}
-                            </div>
-                            
-                            {/* Kapsyen Bantuan (Penerangan untuk user) */}
-                            <div className="flex justify-between text-[9px] text-slate-400 italic px-1">
-                                <span>* Had bayaran ikut milestone siap</span>
-                                {showWarning && <span className="text-red-500 font-bold not-italic">! Perlu Semakan Dokumen</span>}
-                            </div>
-                        </div>
-                    </div>
-
-                    {/* E. FOOTER (GEMPAK: TOTAL COST CARD) */}
-                    <div className="mt-3 pt-1">
-                        <div className="bg-gradient-to-r from-slate-50 to-white border border-slate-200 rounded-lg p-2.5 shadow-sm flex items-center justify-between hover:border-indigo-300 transition-colors duration-300 group/footer">
-                            
-                            {/* Kiri: Label & Status VO */}
-                            <div className="flex flex-col gap-0.5">
-                                <span className="flex items-center gap-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-widest">
-                                    <svg className="w-3.5 h-3.5 text-slate-400 group-hover/footer:text-indigo-500 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z"></path></svg>
-                                    Nilai Kontrak
-                                </span>
-                                
-                                {/* Logic VO Badge */}
-                                {voTambah > 0 ? (
-                                    <span className="flex items-center gap-1 text-[9px] font-black text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-100 w-fit">
-                                        <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"></path></svg>
-                                        ADA VO TAMBAHAN
-                                    </span>
-                                ) : (
-                                    <span className="text-[9px] font-bold text-slate-300 pl-5">
-                                        TIADA PERUBAHAN
-                                    </span>
-                                )}
-                            </div>
-
-                            {/* Kanan: Nilai Besar */}
-                            <div className="text-right">
-                                <div className="text-lg font-black text-slate-800 leading-none tracking-tight group-hover/footer:text-indigo-700 transition-colors">
-                                    {fmtRM(kosAkhir)}
-                                </div>
-                                {/* Label kecil harga asal jika ada VO, supaya nampak beza */}
-                                {voTambah > 0 && (
-                                    <span className="text-[9px] text-slate-400 line-through decoration-slate-300 block mt-0.5">
-                                        Asal: {fmtRM(parseVal(kosAkhir) - voTambah)}
-                                    </span>
-                                )}
-                            </div>
-
-                        </div>
-                    </div>
-                </div>
-            </div>
-        );
-    };
+                  </div>
+              </div>
+          );
+      };
 
     return (
         <div className="flex flex-col h-full animate-fade-in pb-10 font-sans">
@@ -1336,29 +2358,61 @@ const DevelopmentPlanningBoard = ({ data }) => {
             {/* 1. GAMIFICATION SECTION (Letak Sini) */}
             <GamificationSection data={data} selectedYear={selectedPlanYear} />
 
-            {/* HEADER & FILTER */}
-            <div className="flex justify-between items-end mb-6 px-1">
-                <div>
-                    <h3 className="text-xl font-black text-slate-800 uppercase tracking-tighter flex items-center gap-2">
-                        <span className="p-2 rounded-lg bg-indigo-600 text-white shadow-lg shadow-indigo-200">
-                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" /></svg>
-                        </span>
-                        Perancangan Pembangunan
-                    </h3>
-                    <div className="flex items-center gap-2 mt-1 ml-1">
-                        <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">Paparan Tahun:</span>
-                        <span className="text-xs font-black text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-100">{selectedPlanYear}</span>
+            {/* HEADER & FILTER & STATS */}
+            <div className="flex flex-col gap-4 mb-6 px-1">
+                
+                {/* Tajuk & Dropdown Tahun */}
+                <div className="flex justify-between items-end">
+                    <div>
+                        <h3 className="text-xl font-black text-slate-800 uppercase tracking-tighter flex items-center gap-2">
+                            <span className="p-2 rounded-lg bg-indigo-600 text-white shadow-lg shadow-indigo-200">
+                                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" /></svg>
+                            </span>
+                            Perancangan Pembangunan
+                        </h3>
+                        <div className="flex items-center gap-3 mt-2">
+                            {/* Stat Badge: Bilangan Projek */}
+                            <span className="text-[10px] font-bold bg-white border border-slate-200 px-2 py-1 rounded-md shadow-sm text-slate-500">
+                                {stats.totalCount} Projek
+                            </span>
+                            {/* Stat Badge: Nilai Keseluruhan */}
+                            <span className="text-[10px] font-black bg-emerald-50 border border-emerald-100 px-2 py-1 rounded-md shadow-sm text-emerald-600">
+                                Nilai: {fmtRM(stats.totalValue)}
+                            </span>
+                        </div>
                     </div>
-                </div>
-                <div className="relative group z-20">
-                    <div className="relative bg-white rounded-xl p-1 flex items-center border border-slate-200 shadow-sm hover:border-indigo-400 transition-colors">
-                        <span className="pl-3 pr-2 text-[10px] font-black uppercase text-slate-400">TUKAR TAHUN:</span>
-                        <select value={selectedPlanYear} onChange={(e) => setSelectedPlanYear(e.target.value)} className="bg-transparent text-slate-800 font-black text-sm py-2 pr-8 outline-none cursor-pointer appearance-none min-w-[80px]">
-                            {!availableYears.includes(currentYear) && <option value={currentYear}>{currentYear}</option>}
-                            {!availableYears.includes("2026") && <option value="2026">2026</option>}
-                            {availableYears.map(y => <option key={y} value={y}>{y}</option>)}
-                        </select>
-                        <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none"><svg className="w-4 h-4 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg></div>
+
+                    <div className="flex items-center gap-2">
+                        {/* SEARCH BAR BARU */}
+                        <div className="relative group">
+                            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                                <svg className="h-4 w-4 text-slate-400 group-focus-within:text-indigo-500 transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                                </svg>
+                            </div>
+                            <input
+                                type="text"
+                                className="block w-full pl-9 pr-3 py-2 border border-slate-200 rounded-lg leading-5 bg-white placeholder-slate-400 focus:outline-none focus:bg-white focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400 sm:text-xs font-bold transition-all shadow-sm w-[200px] focus:w-[250px]"
+                                placeholder="Cari Projek / Syarikat..."
+                                value={searchTerm}
+                                onChange={(e) => setSearchTerm(e.target.value)}
+                            />
+                            {searchTerm && (
+                                <button onClick={() => setSearchTerm("")} className="absolute inset-y-0 right-0 pr-3 flex items-center text-slate-300 hover:text-red-500 cursor-pointer">
+                                    <svg className="h-4 w-4" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" /></svg>
+                                </button>
+                            )}
+                        </div>
+
+                        {/* TAHUN FILTER (YANG LAMA) */}
+                        <div className="relative bg-white rounded-lg p-0 flex items-center border border-slate-200 shadow-sm hover:border-indigo-400 transition-colors">
+                            <select value={selectedPlanYear} onChange={(e) => setSelectedPlanYear(e.target.value)} className="bg-transparent text-slate-800 font-black text-xs py-2 pl-3 pr-8 outline-none cursor-pointer appearance-none min-w-[70px]">
+                                {!availableYears.includes(currentYear) && <option value={currentYear}>{currentYear}</option>}
+                                {!availableYears.includes("2026") && <option value="2026">2026</option>}
+                                {availableYears.map(y => <option key={y} value={y}>{y}</option>)}
+                            </select>
+                            <div className="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none"><svg className="w-3 h-3 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg></div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -1396,7 +2450,7 @@ const DevelopmentPlanningBoard = ({ data }) => {
                              <span className="bg-indigo-100 text-indigo-700 px-2.5 py-1 rounded-md text-[11px] font-black shadow-sm">{buckets.progress.length}</span>
                         </div>
                         <div className="space-y-4">
-                            {buckets.progress.map((p, i) => <ProjectCard key={i} p={p} type="progress" />)}
+                            {buckets.progress.map((p, i) => <ProjectCard key={i} p={p} type="progress" onClick={() => setSelectedProject(p)} />)}
                             {buckets.progress.length === 0 && <EmptyState msg="Tiada projek aktif." />}
                         </div>
                     </div>
@@ -1410,13 +2464,20 @@ const DevelopmentPlanningBoard = ({ data }) => {
                              <span className="bg-emerald-100 text-emerald-700 px-2.5 py-1 rounded-md text-[11px] font-black shadow-sm">{buckets.completed.length}</span>
                         </div>
                         <div className="space-y-4">
-                            {buckets.completed.map((p, i) => <ProjectCard key={i} p={p} type="completed" />)}
+                            {buckets.completed.map((p, i) => <ProjectCard key={i} p={p} type="completed" onClick={() => setSelectedProject(p)} />)}
                             {buckets.completed.length === 0 && <EmptyState msg="Tiada projek siap." />}
                         </div>
                     </div>
 
                 </div>
             </div>
+            {/* RENDER MODAL JIKA ADA PROJEK DIPILIH */}
+            {selectedProject && (
+                <ProjectDetailModal 
+                    project={selectedProject} 
+                    onClose={() => setSelectedProject(null)} 
+                />
+            )}
         </div>
     );
 };
@@ -1434,9 +2495,9 @@ const EmptyState = ({ msg }) => (
     const [loading, setLoading] = useState(true);
     const [staffData, setStaffData] = useState([]);
     const [jawatanData, setJawatanData] = useState([]);
-    const [activeTab, setActiveTab] = useState("planning");
+    const [activeTab, setActiveTab] = useState(() => localStorage.getItem("bpm_activeTab") || "planning");
     const [printing, setPrinting] = useState(false);
-    const [darkMode, setDarkMode] = useState(false);
+    const [darkMode, setDarkMode] = useState(() => localStorage.getItem("bpm_darkMode") === "true");
 
     const currentYear = new Date().getFullYear().toString();
 
@@ -1449,7 +2510,7 @@ const EmptyState = ({ msg }) => (
     const [isFilterOpen, setIsFilterOpen] = useState(false);
     const [selectedBahagian, setSelectedBahagian] = useState("All");
 
-    const [selectedActualYear, setSelectedActualYear] = useState(currentYear);
+    const [selectedActualYear, setSelectedActualYear] = useState("All");
     const [selectedCategories, setSelectedCategories] = useState([]);
     const [selectedPegawai, setSelectedPegawai] = useState("All");
 
@@ -1466,6 +2527,17 @@ const EmptyState = ({ msg }) => (
         setLoading(false);
       });
     }, []);
+
+    useEffect(() => {
+        localStorage.setItem("bpm_activeTab", activeTab);
+    }, [activeTab]);
+
+    useEffect(() => {
+        localStorage.setItem("bpm_darkMode", darkMode);
+        // Update class body/html jika perlu untuk global dark mode
+        if (darkMode) document.documentElement.classList.add('dark');
+        else document.documentElement.classList.remove('dark');
+    }, [darkMode]);
 
     const cleanData = useMemo(() => data.filter((r) => r.NAMA_PAPARAN && r.NAMA_PAPARAN.trim() !== ""), [data]);
 
@@ -2885,6 +3957,52 @@ const EmptyState = ({ msg }) => (
       }
     };
 
+    // FUNGSI BARU: Handle butang AI
+    const handleAiAction = (actionType) => {
+        if (actionType === "Lihat Senarai Lewat") {
+            // 1. Reset carian supaya tak ganggu
+            setSearchTerm("");
+            
+            // 2. Set Filter Status kepada 'Lewat (Overdue)'
+            setSelectedStatuses(["Lewat (Overdue)"]);
+            
+            // 3. Tukar ke Tab Senarai
+            setActiveTab("list");
+            
+            // 4. Scroll ke jadual (sama macam chart drill-down)
+            setTimeout(() => {
+                const listSection = document.querySelector(".group\\/table");
+                if (listSection) listSection.scrollIntoView({ behavior: "smooth", block: "start" });
+            }, 100);
+        }
+        else if (actionType === "Analisis Cashflow") {
+            // Scroll ke widget cashflow (id chartCashFlow)
+            const el = document.getElementById("chartCashFlow");
+            if(el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+        }
+        else if (actionType === "Lihat Kalendar") {
+            // Scroll ke Kalendar (anda mungkin perlu tambah id="masterCalendar" pada div MasterCalendarWidget)
+            // Untuk sekarang kita scroll ke atas tab Stats
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+    };
+
+    // Fungsi Helper untuk handle klik carta
+    const handleChartFilter = (status) => {
+        // 1. Set Filter Status
+        setSelectedStatuses([status]); 
+        
+        // 2. Tukar ke Tab Senarai (sebab chart di tab Stats)
+        setActiveTab("list");
+        
+        // 3. Auto Scroll ke table (tunggu sikit untuk render)
+        setTimeout(() => {
+            // Kita scroll ke 'Senarai Terperinci' header
+            const listSection = document.querySelector(".group\\/table"); 
+            if(listSection) listSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }, 100);
+    };
+
     return (
       <div className={`min-h-screen bg-slate-50 transition-colors duration-500 selection:bg-blue-500 selection:text-white ${darkMode ? 'dark-mode' : ''}`}>
 
@@ -3059,6 +4177,14 @@ const EmptyState = ({ msg }) => (
           {/* PART 1: DASHBOARD STATS */}
           {activeTab === "stats" && (
             <div className="fade-in space-y-8">
+
+              {/* --- 1. AI SMART ASSISTANT --- */}
+              {!loading && (
+                  <SmartAssistantWidget 
+                      data={filtered} 
+                      onAction={handleAiAction} // <--- PASTIKAN PROPS INI DITAMBAH
+                  />
+              )}
 
               {/* ROW 1: STATUS UTAMA */}
               <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-6">
@@ -3290,7 +4416,22 @@ const EmptyState = ({ msg }) => (
                 />
               </div>
 
-              {!loading && <ChartSection data={filtered} darkMode={darkMode} />}
+              {/* --- TAMBAH WIDGET BARU DI SINI --- */}
+              {!loading && <CashFlowWidget data={filtered} />}
+
+              {/* 1. KALENDAR */}
+              {!loading && <MasterCalendarWidget data={cleanData} />} 
+                  
+              {/* 2. RISK HEATMAP (BARU) */}
+              {!loading && <RiskHeatmapWidget data={filtered} />}
+
+              {!loading && (
+                  <ChartSection 
+                      data={filtered} 
+                      darkMode={darkMode} 
+                      onStatusClick={handleChartFilter} // <--- HANTAR FUNGSI TADI KE SINI
+                  />
+              )}
             </div>
           )}
 
@@ -3930,6 +5071,33 @@ const EmptyState = ({ msg }) => (
                       )}
                     </div>
                   </div>
+
+                  {/* 1. FILTER KATEGORI (UBAH JADI MULTI-SELECT CHIPS) */}
+                      <div className="bg-white/50 p-6 rounded-3xl border border-white/60 shadow-sm mb-6">
+                        <label className="flex items-center gap-2 text-[10px] font-black text-slate-400 uppercase mb-4 tracking-widest">
+                          <span className="w-2 h-2 rounded-full bg-orange-500"></span>
+                          Kategori Perkhidmatan (Pilih Banyak)
+                        </label>
+                        <div className="flex flex-wrap gap-2">
+                          {uniqueCategories.map((cat) => {
+                            const isActive = selectedCategories.includes(cat);
+                            return (
+                              <button
+                                key={cat}
+                                onClick={() => toggleSelection(setSelectedCategories, selectedCategories, cat)}
+                                className={`px-3 py-1.5 rounded-lg border text-[10px] font-bold transition-all flex items-center gap-2
+                                  ${isActive 
+                                    ? "bg-orange-500 border-orange-500 text-white shadow-md" 
+                                    : "bg-white border-slate-200 text-slate-500 hover:border-orange-300 hover:text-orange-600"
+                                  }`}
+                              >
+                                {isActive && <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse"></span>}
+                                {cat}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
                 </div>
 
                 {/* LAJUR KANAN: PARAMETER LAIN */}
@@ -4027,33 +5195,6 @@ const EmptyState = ({ msg }) => (
                             </option>
                           ))}
                         </select>
-                      </div>
-
-                      {/* 1. FILTER KATEGORI (UBAH JADI MULTI-SELECT CHIPS) */}
-                      <div className="bg-white/50 p-6 rounded-3xl border border-white/60 shadow-sm mb-6">
-                        <label className="flex items-center gap-2 text-[10px] font-black text-slate-400 uppercase mb-4 tracking-widest">
-                          <span className="w-2 h-2 rounded-full bg-orange-500"></span>
-                          Kategori Perkhidmatan (Pilih Banyak)
-                        </label>
-                        <div className="flex flex-wrap gap-2">
-                          {uniqueCategories.map((cat) => {
-                            const isActive = selectedCategories.includes(cat);
-                            return (
-                              <button
-                                key={cat}
-                                onClick={() => toggleSelection(setSelectedCategories, selectedCategories, cat)}
-                                className={`px-3 py-1.5 rounded-lg border text-[10px] font-bold transition-all flex items-center gap-2
-                                  ${isActive 
-                                    ? "bg-orange-500 border-orange-500 text-white shadow-md" 
-                                    : "bg-white border-slate-200 text-slate-500 hover:border-orange-300 hover:text-orange-600"
-                                  }`}
-                              >
-                                {isActive && <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse"></span>}
-                                {cat}
-                              </button>
-                            );
-                          })}
-                        </div>
                       </div>
 
                       {/* Seksyen */}

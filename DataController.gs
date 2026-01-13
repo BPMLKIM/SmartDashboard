@@ -118,9 +118,13 @@ function getData() {
     const idSeksyen  = (obj['SEKSYEN'] || "").trim();
     const idPegawai  = (obj['PEGAWAI BERTANGGUNGJAWAB'] || "").trim(); // ID Pegawai
     const idVot      = (obj['VOT'] || "").trim();
+    
+    const namaSyarikat = mapSyarikat[idSyarikat] || idSyarikat || '-';
 
     // Nota: Jika ID Pegawai tiada dalam Map, guna nilai asal (Nama)
-    obj['SYARIKAT_NAMA'] = mapSyarikat[idSyarikat] || idSyarikat || '-';
+    obj['SYARIKAT'] = namaSyarikat;
+    obj['SYARIKAT_NAMA'] = namaSyarikat;
+    //obj['SYARIKAT_NAMA'] = mapSyarikat[idSyarikat] || idSyarikat || '-';
     obj['BAHAGIAN_NAMA'] = mapBahagian[idBahagian] || idBahagian || '-';
     obj['SEKSYEN_NAMA']  = mapSeksyen[idSeksyen]   || idSeksyen  || '-';
     obj['PEGAWAI_NAMA']  = mapPegawai[idPegawai]   || idPegawai  || '-'; 
@@ -225,43 +229,137 @@ function getData() {
 }
 
 /**
- * --- FUNGSI UTAMA BARU (GAMIFICATION) ---
- * Menggabungkan Data Projek + Kemajuan + Perakuan Siap
- * Ini adalah fungsi yang perlu dipanggil oleh Frontend (App.js)
+ * --- DATA CONTROLLER: ROBUST JOIN VERSION ---
+ * Menggabungkan Data dengan pembersihan ID (Trim) untuk elak data tak jumpa
  */
 function getIntegratedData() {
-  // 1. Dapatkan Data Projek yang sudah diproses (guna fungsi getData di atas)
   var rawProjek = getData(); 
   var dataProjek = JSON.parse(rawProjek);
 
-  // 2. Dapatkan Data Kemajuan (Raw)
   var dataKemajuan = getRawSheetData("Kemajuan");
+  var dataPerakuan = getRawSheetData("Perakuan_Siap");
+  var dataCatatan  = getRawSheetData("Catatan_Projek");
+  var mapSurat     = getMapSurat();
 
-  // 3. Dapatkan Data Perakuan Siap (Raw)
-  var dataPerakuan = getRawSheetData("Perakuan_Siap"); // Pastikan nama sheet betul
-
-  // 4. Lakukan JOIN Data
   var joinedData = dataProjek.map(function(p) {
-    
-    // Cari data Kemajuan (SDLC) yang sepadan dengan UNIQUE_ID
+    // 1. KUNCI UTAMA: Pastikan ID dibersihkan daripada 'space'
+    var pID = String(p.UNIQUE_ID).trim(); 
+
+    // 2. CARI DATA KEMAJUAN (SDLC)
     var sdlc = dataKemajuan.find(function(k) { 
-      return String(k.PROJEK) === String(p.UNIQUE_ID); 
+      // Pastikan column PROJEK wujud, kalau tak guna column index 1 (backup)
+      var kID = k.PROJEK ? String(k.PROJEK).trim() : "";
+      return kID === pID; 
     }) || {}; 
 
-    // Cari semua Sijil Perakuan Siap yang sepadan dengan UNIQUE_ID
+    // 3. CARI DATA KEWANGAN
     var financials = dataPerakuan.filter(function(s) {
-      return String(s.PROJEK) === String(p.UNIQUE_ID);
+      var sID = s.PROJEK ? String(s.PROJEK).trim() : "";
+      return sID === pID;
     }) || [];
 
-    // Gabungkan ke dalam objek projek
+    // 4. CARI CATATAN & LINK SURAT
+    var notes = dataCatatan.filter(function(c) {
+      var cID = c.PROJEK ? String(c.PROJEK).trim() : "";
+      return cID === pID;
+    }).map(function(note) {
+        var idRujukan = (note["RUJUKAN SURAT"] || "").trim();
+        var dataSurat = mapSurat[idRujukan];
+        
+        var noRujukanSebenar = idRujukan;
+        var urlSurat = "";
+
+        if (dataSurat) {
+            noRujukanSebenar = dataSurat.ref;
+            urlSurat = dataSurat.url;
+        }
+
+        return {
+            ...note,
+            "RUJUKAN SURAT": noRujukanSebenar,
+            "SURAT_URL": urlSurat
+        };
+    });
+
     return {
-      ...p,           // Data asal projek (siap dengan kos, status, EOT)
-      sdlc: sdlc,     // Data Milestone (URS, UAT, Go Live)
-      financials: financials // Senarai sijil pembayaran
+      ...p,
+      sdlc: sdlc,
+      financials: financials,
+      notes: notes
     };
   });
 
   return JSON.stringify(joinedData);
+}
+
+// --- KONFIGURASI APPSHEET ---
+// ID ini diambil dari data snippet anda. Jika salah, sila tukar dengan ID AppSheet sebenar.
+const APP_ID = 'PENGURUSANSURATBPM-295270832';
+const APP_SUFFIX = '';
+
+/**
+ * Helper untuk bina URL AppSheet
+ */
+function buildAppSheetUrl(tableName, fileName) {
+  if (!fileName) return "";
+  // Encode URI component penting untuk handle simbol '/' dalam nama fail
+  return `https://www.appsheet.com/template/gettablefileurl?appName=${APP_ID}&tableName=${encodeURIComponent(tableName)}&fileName=${encodeURIComponent(fileName)}${APP_SUFFIX}`;
+}
+
+// --- HELPER: MAP SURAT DENGAN LOGIK PAUTAN vs LAMPIRAN ---
+function getMapSurat() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var map = {};
+
+  // 1. SURAT MASUK
+  // Index: [0]ID, [2]RUJUKAN, [7]PAUTAN, [8]LAMPIRAN
+  var sheetMasuk = ss.getSheetByName('Surat_Masuk') || ss.getSheetByName('Surat Masuk');
+  if (sheetMasuk) {
+    var data = sheetMasuk.getDataRange().getDisplayValues();
+    for (var i = 1; i < data.length; i++) {
+      var id = data[i][0] ? data[i][0].toString().trim() : "";
+      var ref = data[i][2] ? data[i][2].toString().trim() : "";
+      
+      var linkPautan = data[i][7] ? data[i][7].toString().trim() : "";
+      var linkLampiran = data[i][8] ? data[i][8].toString().trim() : "";
+      
+      var finalUrl = "";
+      if (linkPautan) {
+          finalUrl = linkPautan; // Guna URL lama jika ada
+      } else if (linkLampiran) {
+          // Jika tiada URL lama, bina URL AppSheet dari Lampiran
+          finalUrl = buildAppSheetUrl("Surat_Masuk", linkLampiran);
+      }
+      
+      if (id) map[id] = { ref: ref, url: finalUrl };
+    }
+  }
+
+  // 2. SURAT KELUAR
+  // Index: [0]ID, [2]RUJUKAN, [8]LAMPIRAN, [9]PAUTAN (Nota: Index mungkin berbeza ikut susunan column anda)
+  // Berdasarkan snippet anda: DIRUJUK(6), FAIL(7), LAMPIRAN(8), PAUTAN(9)
+  var sheetKeluar = ss.getSheetByName('Surat_Keluar') || ss.getSheetByName('Surat Keluar');
+  if (sheetKeluar) {
+    var data = sheetKeluar.getDataRange().getDisplayValues();
+    for (var i = 1; i < data.length; i++) {
+      var id = data[i][0] ? data[i][0].toString().trim() : "";
+      var ref = data[i][2] ? data[i][2].toString().trim() : "";
+      
+      var linkLampiran = data[i][8] ? data[i][8].toString().trim() : "";
+      var linkPautan = data[i][9] ? data[i][9].toString().trim() : "";
+      
+      var finalUrl = "";
+      if (linkPautan) {
+          finalUrl = linkPautan;
+      } else if (linkLampiran) {
+          finalUrl = buildAppSheetUrl("Surat_Keluar", linkLampiran);
+      }
+      
+      if (id) map[id] = { ref: ref, url: finalUrl };
+    }
+  }
+
+  return map;
 }
 
 // --- HELPER UNTUK MENGAMBIL DATA RAW DARI SHEET ---
